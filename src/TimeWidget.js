@@ -7,23 +7,23 @@ import TimelineDetails from "./TimelineDetails.js";
 import TimeLineOverview from "./TimeLineOverview";
 import brushInteraction from "./BrushInteraction";
 
-function TimeSearcher(
+function TimeWidget(
   data,
   {
-    /** Elements **/
+    /* Elements */
     target = document.createElement("div"), // pass a html element where you want to render
     detailsElement, // pass a html element where you want to render the details
     coordinatesElement = document.createElement("div"), // pass a html element where you want to render the brush coordinates Input.
     groupsElement, // pass a html element where you want to have the brushes controls.
     showBrushesControls = true, // If false you can still use brushesControlsElement to show the control on a different element on your app
     showBrushTooltip = true, // Allows to display a tooltip on the brushes containing its coordinates.
-    /** Data **/
+    /* Data */
     x = (d) => d.x, // Attribute to show in the X axis (Note that it also supports functions)
     y = (d) => d.y, // Attribute to show in the Y axis (Note that it also supports functions)
     id = (d) => d.id, // Attribute to group the input data (Note that it also supports functions)
     color = null, //Specifies the attribute to be used to discriminate the groups (Note that it also supports functions).
     referenceCurves = null, // Specifies a Json object with the information of the reference lines.
-    fmtX , // Function, how to format x points in the tooltip. If not provided will try to guess if it is a date or a number
+    fmtX, // Function, how to format x points in the tooltip. If not provided will try to guess if it is a date or a number
     fmtY = d3.format(".1f"), // Function, how to format x points in the tooltip
     stepX = { days: 10 }, // Defines the step used, both in the spinboxes and with the arrows on the X axis.
     stepY = 1, // // Defines the step used, both in the spinboxes and with the arrows on the Y axis.
@@ -34,7 +34,7 @@ function TimeSearcher(
     yLabel = "",
     xLabel = "",
     filters = [], // Array of filters to use, format [[x1, y1], [x2, y2], ...]
-    /** Color Configuration **/
+    /* Color Configuration */
     defaultAlpha = 0.7, // Default transparency (when no selection is active) of drawn lines
     selectedAlpha = 1.0, // Transparency of selected lines
     noSelectedAlpha = 0.1, // Transparency of unselected lines
@@ -45,11 +45,11 @@ function TimeSearcher(
     noSelectedColor = "#dce0e5", // Color of unselected lines. It only has effect when "color" is not defined.
     colorScale = d3.scaleOrdinal(d3.schemeAccent), // The color scale to be used to display the different groups defined by the "color" attribute.
     brushesColorScale = color
-      ? d3.scaleOrdinal(d3.schemeGreys[3].reverse())
+      ? d3.scaleOrdinal(d3.schemeGreys[3].toReversed())
       : d3.scaleOrdinal(d3.schemeTableau10), // The color scale to be used to display the brushes
     selectedColorTransform = (color, groupId) =>
       d3.color(color).darker(groupId), // Function to be applied to the color of the selected group. It only has effect when "color" is defined.
-    /** Size Configuration **/
+    /* Size Configuration */
     width = 1200, // Set the desired width of the overview Widget
     detailsWidth = 400, // Set the desired width of the details Widget
     height = 600, // Set the desired height of the overview Widget
@@ -57,22 +57,22 @@ function TimeSearcher(
     detailsContainerHeight = 400, // Set the desired height of the details Widget
     margin = { left: 50, top: 30, bottom: 50, right: 50 },
     detailsMargin = null, // Margin options for details view, d3 common format, leave null for using the overview margin
-    /** CallBacks **/
+    /* CallBacks */
     updateCallback = () => {}, // (data) => doSomethingWithData
     statusCallback = () => {}, // (status) => doSomethingWithStatus
-    /** Rendering **/
+    /* Rendering */
     brushShadow = "drop-shadow( 2px 2px 2px rgba(0, 0, 0, .7))",
     showGroupMedian = true, // If active show a line with the median of the enabled groups.
     hasDetails = false, // Determines whether detail data will be displayed or not. Disabling it saves preprocessing time if detail data is not to be displayed.
     doubleYlegend = false, // Allows the y-axis legend to be displayed on both sides of the chart.
     showGrid = false, // If active, a reference grid is displayed.
     brushGroupSize = 15, //Controls the size of the colored rectangles used to select the different brushGroups.
-    /** Performance **/
+    /* Performance */
     maxDetailsRecords = 10, // How many results to show in the detail view
     maxTimelines = null, // Set to a value to limit the number of distinct timelines to show
     xPartitions = 10, // Partitions performed on the X-axis for the collision acceleration algorithm.
     yPartitions = 10, // Partitions performed on the Y-axis for the collision acceleration algorithm.
-    /** Options **/
+    /* Options */
     medianNumBins = 10, // Number of bins used to compute the group median.
     medianLineDash = [7], // Selected group median line dash pattern canvas style
     medianLineAlpha = 1, // Selected group median line opacity
@@ -82,11 +82,11 @@ function TimeSearcher(
     autoUpdate = true, // Allows to decide whether changes in brushes are processed while moving, or only at the end of the movement.
     _this, // pass the object this in order to be able to maintain the state in case of changes in the input
     fixAxis, // When active, the axes will not change when modifying the data.
-    /** Legacy or to be deleted **/
+    /* Legacy or to be deleted */
     groupAttr = null, // DEPRECATED use color instead: Specifies the attribute to be used to discriminate the groups (Note that it also supports functions).
     overviewWidth, // Legacy, to be deleted
     overviewHeight, // Legacy, to be deleted
-    tsParent, // Set other TimeSearcher parent to connect them.
+    tsParent, // Set other TimeWidget parent to connect them.
     highlightAlpha = 1, // Transparency oh the highlighted lines (lines selected in other TS)
   } = {}
 ) {
@@ -105,7 +105,6 @@ function TimeSearcher(
     divData,
     divBrushesCoordinates,
     svg,
-    g,
     gGroupBrushes,
     gBrushes,
     gReferences,
@@ -121,9 +120,9 @@ function TimeSearcher(
     nGroupsData,
     timelineDetails, // Centralizes the details component
     timelineOverview, // Centralizes the overview component
-    tsElements, // Stores the HTML target of all coneceted TimeSearchers
-    tsElementsSelection, // Stores the selection made by other connectedTimeSearchers
-    positionTs, // Stores the position of the current TimeSearcher. 0 is the top.
+    tsElements, // Stores the HTML target of all connected TimeWidgets
+    tsElementsSelection, // Stores the selection made by other connected TimeWidgets
+    positionTs, // Stores the position of the current TimeWidget. 0 is the top.
     otherSelectionToHightlight, // Determines what group and certain ts level must be highlighted
     brushes;
 
@@ -195,8 +194,8 @@ function TimeSearcher(
     .style("background-color", ts.backgroundColor)
     .node();
 
-  // Listen to customEvent to connect timeSearchers
-  d3.select(target).on("timeSearcher", onTimeSearcherEvent);
+  // Listen to customEvent to connect TimeWidgets
+  d3.select(target).on("TimeWidget", onTimeWidgetEvent);
   d3.select(target).on("input", onInput);
 
   divBrushesCoordinates = d3.select(coordinatesElement);
@@ -208,7 +207,6 @@ function TimeSearcher(
   dataSelected = new Map();
   dataNotSelected = [];
   selectedGroupData = new Set();
-  nGroupsData = 0;
   showNonSelected = true;
   //positionTs = 0;
   tsElementsSelection = [];
@@ -243,7 +241,7 @@ function TimeSearcher(
 
     //Sent event to others TS
     if (tsElements) {
-      let event = new CustomEvent("timeSearcher", {
+      let event = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.addBrushGroup,
         },
@@ -256,7 +254,7 @@ function TimeSearcher(
     showNonSelected = newState;
 
     if (tsElements) {
-      let event = new CustomEvent("timeSearcher", {
+      let event = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.changeNonSelected,
           data: {
@@ -273,7 +271,7 @@ function TimeSearcher(
 
     //Sent event to ohter Ts
     if (tsElements) {
-      let event = new CustomEvent("timeSearcher", {
+      let event = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.changeBrushGroupState,
           data: {
@@ -295,7 +293,7 @@ function TimeSearcher(
 
     // Sent event to others TS
     if (tsElements) {
-      let event = new CustomEvent("timeSearcher", {
+      let event = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.removeBrushGroup,
           data: id,
@@ -310,7 +308,7 @@ function TimeSearcher(
     brushes.selectBrushGroup(id);
     // Sent event to others TS
     if (tsElements) {
-      let event = new CustomEvent("timeSearcher", {
+      let event = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.selectBrushGroup,
           data: id,
@@ -324,7 +322,7 @@ function TimeSearcher(
   function onChangeSelectedBrush(brush) {
     if (tsElements) {
       if (brush) {
-        let event = new CustomEvent("timeSearcher", {
+        let event = new CustomEvent("TimeWidget", {
           detail: {
             type: eventType.deselectAllBrushes,
           },
@@ -334,7 +332,7 @@ function TimeSearcher(
 
       let event;
       if (brush) {
-        event = new CustomEvent("timeSearcher", {
+        event = new CustomEvent("TimeWidget", {
           detail: {
             type: eventType.highlightSelection,
             data: {
@@ -344,7 +342,7 @@ function TimeSearcher(
           },
         });
       } else {
-        event = new CustomEvent("timeSearcher", {
+        event = new CustomEvent("TimeWidget", {
           detail: {
             type: eventType.highlightSelection,
           },
@@ -465,7 +463,7 @@ function TimeSearcher(
               showNonSelected ? "checked" : ""
             } ></input>                        
             <output 
-              style="margin-right: 0px; border: none;outline: none; width: ${
+              style="margin-right: 0; border: none;outline: none; width: ${
                 groupName.length
               }ch;"
               >${groupName}</output>
@@ -504,26 +502,14 @@ function TimeSearcher(
       });
   }
 
-  function initDomains({ xDataType, groupedData, fData }) {
-    // Adjust the alpha based on the number of lines
-
-    log("Sorting data");
-    groupedData.map((d) => [
-      d[0],
-      d[1].sort((a, b) => d3.ascending(x(a), x(b))),
-    ]);
-
-    log("Sorting data: done");
-
-    ts.alphaScale.domain([0, groupedData.length]);
-
+  function initDomains({ xDataType, fData }) {
     if (!xDomain) {
       xDomain = fixAxis && _this ? _this.extent.x : d3.extent(fData, x); // Keep same axes as in the first rendering
     }
 
     overviewX = xScale ? xScale.copy() : undefined;
 
-    if (xDataType === "object" && x(fData[0]) instanceof Date) {      
+    if (xDataType === "object" && x(fData[0]) instanceof Date) {
       // X is Date
       hasScaleTime = true;
       if (!overviewX) overviewX = d3.scaleTime();
@@ -1363,6 +1349,7 @@ function TimeSearcher(
     }
 
     divOverview.value = value;
+    divOverview.value.groupsColorScale = brushesColorScale;
     divOverview.value.nonSelectedIds = dataNotSelected.map((d) => d[0]);
     divOverview.value.selectedIds = dataSelected
       .get(brushes.getBrushGroupSelected())
@@ -1380,7 +1367,7 @@ function TimeSearcher(
 
   function sentSelection(selection, update) {
     //if (brushes.hasSelection()) {
-    let eventSelection = new CustomEvent("timeSearcher", {
+    let eventSelection = new CustomEvent("TimeWidget", {
       detail: {
         type: eventType.changeSelection,
         data: brushes.hasSelection() ? selection : null,
@@ -1390,7 +1377,7 @@ function TimeSearcher(
     sentEvent(eventSelection);
 
     if (update) {
-      let eventUpdate = new CustomEvent("timeSearcher", {
+      let eventUpdate = new CustomEvent("TimeWidget", {
         detail: {
           type: eventType.update,
         },
@@ -1402,7 +1389,7 @@ function TimeSearcher(
     //}
   }
 
-  // Send a customEvent to all TimeSearchers but the sender
+  // Send a customEvent to all TimeWidgets but the sender
   function sentEvent(customEvent) {
     customEvent.detail.sourceId = positionTs;
     if (!tsElements) return;
@@ -1412,7 +1399,7 @@ function TimeSearcher(
     });
   }
 
-  function onTimeSearcherEvent(event) {
+  function onTimeWidgetEvent(event) {
     let eventData = event.detail;
     log(
       "customEvent",
@@ -1525,7 +1512,7 @@ function TimeSearcher(
     }
     // Filter with the last selection made.
     if (lastWithSelection !== undefined) {
-      // to this beacuse if(0) is false
+      // do this because if(0) is false
       tsElementsSelection[lastWithSelection].forEach((g, gId) => {
         let selectedSet = new Set();
         g.forEach((d) => {
@@ -1601,9 +1588,18 @@ function TimeSearcher(
     if (!Array.isArray(curves)) {
       throw new Error("The reference curves must be an array of Objects");
     }
+    let domainX = overviewX.domain();
+    let domainY = overviewY.domain();
 
     curves.forEach((c) => {
       c.data.sort((a, b) => d3.ascending(x(a), x(b)));
+      c.data = c.data.filter(
+        (p) =>
+          p[0] >= domainX[0] &&
+          p[0] <= domainX[1] &&
+          p[1] >= domainY[0] &&
+          p[1] <= domainY[1]
+      );
     });
 
     let line2 = d3
@@ -1632,8 +1628,8 @@ function TimeSearcher(
     return arguments.length ? ((statusCallback = _), ts) : statusCallback;
   };
 
-  // Notify a parent timeSearcher the presence of a child, and calculate the total
-  // TimeSearcher linked and the position of each of them.
+  // Notify a parent TimeWidget the presence of a child, and calculate the total
+  // TimeWidget linked and the position of each of them.
   ts.notifyParent = function (linkedTs, childs) {
     linkedTs.unshift(target);
     if (tsParent) tsElements = tsParent.notifyParent(linkedTs, childs + 1);
@@ -1658,22 +1654,28 @@ function TimeSearcher(
         x(d) !== undefined &&
         x(d) !== null
     );
-    /* log(
-          `Processing data: done filtering ${fData.length} left out of ${data.length}`
-        );*/
+
+    let xDataType = typeof x(fData[0]);
+
+    initDomains({ xDataType, fData });
+
+    fData = fData.filter(
+      (d) => !isNaN(overviewX(x(d))) && !isNaN(overviewY(y(d)))
+    );
+
     groupedData = d3.groups(fData, id);
-    /*log(
-          `Processing data: grouping done ${groupedData.length} timelines out of ${data.length} records`
-        );*/
+
+    groupedData.map((d) => [
+      d[0],
+      d[1].sort((a, b) => d3.ascending(x(a), x(b))),
+    ]);
+
+    ts.alphaScale.domain([0, groupedData.length]);
 
     // Limit the number of timelines
     if (maxTimelines) groupedData = groupedData.slice(0, maxTimelines);
 
-    let xDataType = typeof x(fData[0]);
-
-    initDomains({ xDataType, fData, groupedData });
-
-    g = init();
+    init();
 
     timelineOverview.setScales({
       scaleX: overviewX,
@@ -1730,9 +1732,9 @@ function TimeSearcher(
   };
 
   // Remove possible previous event listener
-  //target.removeEventListener("timeSearcher", onTimeSearcherEvent);
+  //target.removeEventListener("TimeWidget", onTimeWidgetEvent);
 
-  // Make the ts object accesible
+  // Make the ts object accessible
   divOverview.ts = ts;
   divOverview.details = detailsElement;
   divOverview.brushesCoordinates = divBrushesCoordinates.node();
@@ -1740,4 +1742,4 @@ function TimeSearcher(
   return divOverview;
 }
 
-export default TimeSearcher;
+export default TimeWidget;
