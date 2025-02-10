@@ -1003,8 +1003,8 @@ function TimeWidget(
         }
       }
     } else {
-      let x0 = +sx0.node().value;
-      let x1 = +sx1.node().value;
+      x0 = +sx0.node().value;
+      x1 = +sx1.node().value;
 
       if (x0 >= x1) {
         if (sourceEvent.target === sx0.node()) {

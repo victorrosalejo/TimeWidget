@@ -172,7 +172,7 @@ For the definition of the reference lines, see the [custom formats](#reference-l
 ## Options
 This section will show all possible options grouped by categories.
 ### Elements
- - **target**: pass a html element  where you want to render
+ -  **target**: pass a html element where you want to render
  -  **detailsElement**:  pass a html element  where you want to render the details
  -  **coordinatesElement**: pass a html element where you want to render the brush coordinates Input.
  -  **groupsElement**: pass a html element where you want to have the brushes controls.
