@@ -3,8 +3,9 @@ import node, { nodeResolve } from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import terser from "@rollup/plugin-terser";
 import injectProcessEnv from "rollup-plugin-inject-process-env";
-import meta from "./package.json" assert { type: "json" };
-import { babel } from "@rollup/plugin-babel";
+// import meta from "./package.json" assert { type: "json" };
+import meta from "./package.json" with { type: "json" };
+// import { babel } from "@rollup/plugin-babel";
 
 const copyright = `// ${meta.homepage} v${
   meta.version

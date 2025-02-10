@@ -213,9 +213,8 @@ function TimeWidget(
 
   function initBrushesControls() {
     groupsElement.innerHTML = `<div style="flex-basis:100%;">
-    <ul id="brushesList">
-      
-    </ul>
+    <div id="brushesList">
+    </div>
     <button id="btnAddBrushGroup">Add Group</button>
     </div>`;
 
@@ -357,29 +356,29 @@ function TimeWidget(
       .select("#brushesList")
       .selectAll(".brushControl")
       .data(brushes.getBrushesGroup(), (d) => d[0])
-      .join("li")
+      .join("div")
       .attr("class", "brushControl")
       .each(function (d, i, n) {
         let groupsSize = n.length;
 
-        const li = d3.select(this);
+        const div = d3.select(this);
         let groupName = d[1].name;
         let groupCount = renderSelected.has(d[0])
           ? renderSelected.get(d[0]).length
           : 0;
-        li.node().innerHTML = `<div style="
+        div.node().innerHTML = `<div style="
             display: flex;
-            flex-wrap: nowrap;        
+            flex-wrap: nowrap;
             align-items: center;
           ">
             <input type="checkbox" id="checkBoxShowBrushGroup" ${
               d[1].isEnable ? "checked" : ""
-            } ></input>                        
-            <div 
+            } ></input>
+            <div
               id="groupColor"
               style="
-              min-width: ${ts.brushGroupSize}px; 
-              width: ${ts.brushGroupSize}px; 
+              min-width: ${ts.brushGroupSize}px;
+              width: ${ts.brushGroupSize}px;
               height: ${ts.brushGroupSize}px;
               background-color: ${computeBrushColor(d[0])};
               border-width: ${
@@ -390,12 +389,12 @@ function TimeWidget(
               margin-right: 5px;
               cursor: pointer;
             "></div>
-            <input 
+            <input
               id="groupName"
               style="margin-right: 5px; border: none;outline: none; width: ${
                 groupName.length
               }ch;"
-              contenteditable="true" 
+              contenteditable="true"
               value="${groupName}"></input>
             <span id="groupSize" style="margin-right: 5px;">(${groupCount})</span>
            <button style="color: red;font-weight: bold; border:none; background:none;
@@ -456,13 +455,13 @@ function TimeWidget(
 
         li.node().innerHTML = `<div style="
             display: flex;
-            flex-wrap: nowrap;        
+            flex-wrap: nowrap;
             align-items: center;
           ">
             <input type="checkbox" id="checkBoxShowBrushGroup" ${
               showNonSelected ? "checked" : ""
-            } ></input>                        
-            <output 
+            } ></input>
+            <output
               style="margin-right: 0; border: none;outline: none; width: ${
                 groupName.length
               }ch;"
@@ -1555,14 +1554,14 @@ function TimeWidget(
         for (let brush of brushGroup[1].entries()) {
           if (brush[1].selection !== null) {
             let nBrush = Object.assign({}, brush[1]);
-  
+
             // pixels
             let [[x0, y0], [x1, y1]] = brush[1].selection;
             nBrush.selectionPixels = [
               [x0, y0],
               [x1, y1],
             ];
-  
+
             // data domain
             let [[xi0, yi0], [xi1, yi1]] = brush[1].selection.map(([x, y]) => [
               overviewX.invert(x),
@@ -1572,9 +1571,9 @@ function TimeWidget(
               [xi0, yi0],
               [xi1, yi1],
             ];
-  
+
             nBrush.isActive = !!selectedBrush && selectedBrush[0] === brush[0];
-  
+
             innerMap.set(brush[0], nBrush);
           }
         }

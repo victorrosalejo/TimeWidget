@@ -9,17 +9,17 @@
     "prettier"
   ],
   "parserOptions": {
-    "ecmaVersion": 2023,
+    "ecmaVersion": 2024,
     "sourceType": "module"
   },
   "rules": {
-    "indent": [
-      "error",
-      2,
-      {
-        "SwitchCase": 1
-      }
-    ],
+    // "indent": [
+    //   "error",
+    //   2,
+    //   {
+    //     "SwitchCase": 1
+    //   }
+    // ],
     "linebreak-style": [
       "error",
       "unix"
