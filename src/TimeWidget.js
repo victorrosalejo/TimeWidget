@@ -844,7 +844,7 @@ function TimeWidget(
     let selection = d3.select(brushesCoordinates);
     let divX = selection.append("div");
 
-    divX.append("span").text(xLabel);
+    divX.append("span").text(xLabel ? xLabel : "X Axis:");
 
     let divInputX = divX.append("div");
 
@@ -873,7 +873,7 @@ function TimeWidget(
 
     let divY = selection.append("div");
 
-    divY.append("span").text(yLabel);
+    divY.append("span").text(yLabel ? yLabel : "Y Axis:");
 
     let divInputY = divY.append("div");
 
