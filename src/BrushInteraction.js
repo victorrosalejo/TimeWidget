@@ -46,7 +46,8 @@ function brushInteraction({
     dataNotSelected,
     BVH_,
     brushTooltip,
-    brushContextMenu;
+    brushContextMenu,
+    brushWithTooltip;
 
   if (!data) return;
 
@@ -98,7 +99,7 @@ function brushInteraction({
       x0 = +x0;
       x1 = +x1;
     }
-    me.moveSelectedBrush([
+    me.moveBrush(brushWithTooltip, [
       [x0, y0],
       [x1, y1],
     ]);
@@ -173,18 +174,8 @@ function brushInteraction({
     brushGroup = brushGroupSelected,
     brushinitialSelection = undefined
   ) {
-    // Setup the brush
+    // Create the brush
     let brush = d3.brush().on("start", onBrushStart);
-    brush.on("brush.move", moveSelectedBrushes);
-    brush.on("brush.Selected", tSelectionCall);
-    if (ts.autoUpdate) {
-      // Update brushSelection only if autoUpdate
-      brush.on("brush.brushed", tBrushed);
-    }
-    if (ts.showBrushTooltip) {
-      brush.on("brush.show", tShowTooltip);
-    }
-    brush.on("end", onBrushEnd);
 
     // Add the new brush to the group
     brushesGroup
@@ -201,6 +192,22 @@ function brushInteraction({
           brushinitialSelection
         )
       );
+    let brushObject = [
+      brushCount,
+      brushesGroup.get(brushGroupSelected).brushes.get(brushCount),
+    ];
+    // Set events for Brush
+    brush.on("brush.move", moveSelectedBrushes);
+    brush.on("brush.Selected", tSelectionCall);
+    if (ts.autoUpdate) {
+      // Update brushSelection only if autoUpdate
+      brush.on("brush.brushed", tBrushed);
+    }
+    if (ts.showBrushTooltip) {
+      brush.on("brush.show", (event) => tShowTooltip(event, brushObject));
+    }
+    brush.on("end", onBrushEnd);
+
     brushCount++;
   }
 
@@ -462,7 +469,7 @@ function brushInteraction({
     return selectedBrush && d[0] === selectedBrush[0] ? brushShadow : "";
   }
 
-  function showBrushTooltip({ selection, sourceEvent }) {
+  function showBrushTooltip({ selection, sourceEvent }, brush) {
     if (!selection || sourceEvent === undefined) return;
 
     let selectionInverted = selection.map(([x, y]) => [
@@ -470,6 +477,7 @@ function brushInteraction({
       scaleY.invert(+y),
     ]);
 
+    brushWithTooltip = brush;
     brushTooltip.__update({
       selection: selectionInverted,
       selectionPixels: selection,
@@ -531,7 +539,7 @@ function brushInteraction({
         .selectAll(":not(.overlay)")
         .on("mousemove", (sourceEvent) => {
           let selection = brushValue.selection;
-          showBrushTooltip({ selection, sourceEvent });
+          showBrushTooltip({ selection, sourceEvent }, d);
         });
     }
   }
