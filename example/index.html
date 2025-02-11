@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Document</title>
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="https://cdn.jsdelivr.net/npm/@observablehq/inputs@0.12/dist/index.css"
+    />
   </head>
   <body>
     <!-- target for the main Widget -->
@@ -18,7 +23,11 @@
     <script src="../dist/TimeWidget.js"></script>
     <!-- <script src="https://unpkg.com/time_searcher/dist/TimeWidget.min.js"></script> -->
 
-    <script>
+    <script type="module">
+      import { table } from "https://cdn.jsdelivr.net/npm/@observablehq/inputs@0.12/+esm";
+
+      const selectedDiv = document.getElementById("selected");
+
       d3.csv("./Stocks.csv", type).then((data) => {
         // let data = [
         //   { Date: "01/01/2023", Open: 250, id: "Apple", group: "Technology" },
@@ -35,16 +44,14 @@
           }
         );
 
+
+        selectedDiv.appendChild(table(ts.value.asArray()));
+
         ts.addEventListener("input", () => {
-          document.getElementById("selected").innerText = JSON.stringify(ts.value, null, 2);
-          //  html`${[
-          //   ...ts.value,
-          // ].map(
-          //   ([groupName, groupSelectedMap]) =>
-          //     html`<h3>${groupName}</h3><div>${[...groupSelectedMap.keys()].map(
-          //       (stock) => html`<div>${stock}</div>`
-          //     )}</div>`
-          // )}`;
+
+          selectedDiv.innerHTML = "";
+          selectedDiv.appendChild(table(ts.value.asArray()));
+
           console.log("Selected", ts.value);
         });
 
