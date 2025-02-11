@@ -12,11 +12,10 @@ function TimeWidget(
   {
     /* Elements */
     target = document.createElement("div"), // pass a html element where you want to render
-    detailsElement, // pass a html element where you want to render the details
-    coordinatesElement = document.createElement("div"), // pass a html element where you want to render the brush coordinates Input.
-    groupsElement, // pass a html element where you want to have the brushes controls.
-    showBrushesControls = true, // If false you can still use brushesControlsElement to show the control on a different element on your app
+    showBrushesControls = true, // If false you can still use brushesControlsElement to show the control on a different element on your app. For this use the exported value "groups"
     showBrushTooltip = true, // Allows to display a tooltip on the brushes containing its coordinates.
+    showBrushesCoordinates = true, // If false you can still use brushesCoordinatesElement to show the control on a different element on your app. For this use the exported value "brushesCoordinates"
+    showDetails = true, // If false and with hasDetails = true, you can still use detailsElement to show the control on a different element on your app. For this use the exported value "details"
     /* Data */
     x = (d) => d.x, // Attribute to show in the X axis (Note that it also supports functions)
     y = (d) => d.y, // Attribute to show in the Y axis (Note that it also supports functions)
@@ -50,7 +49,7 @@ function TimeWidget(
     selectedColorTransform = (color, groupId) =>
       d3.color(color).darker(groupId), // Function to be applied to the color of the selected group. It only has effect when "color" is defined.
     /* Size Configuration */
-    width = 1200, // Set the desired width of the overview Widget
+    width = 800, // Set the desired width of the overview Widget
     detailsWidth = 400, // Set the desired width of the details Widget
     height = 600, // Set the desired height of the overview Widget
     detailsHeight = 300, // Set the desired height of the details Widget
@@ -103,7 +102,9 @@ function TimeWidget(
     divRender,
     divControls,
     divData,
-    divBrushesCoordinates,
+    brushesCoordinates,
+    detailsElement,
+    groupsElement,
     svg,
     gGroupBrushes,
     gBrushes,
@@ -198,7 +199,14 @@ function TimeWidget(
   d3.select(target).on("TimeWidget", onTimeWidgetEvent);
   d3.select(target).on("input", onInput);
 
-  divBrushesCoordinates = d3.select(coordinatesElement);
+  divControls =
+    divControls ||
+    d3.select(target).select("#control").node() ||
+    d3.create("div").attr("id", "control").node();
+  brushesCoordinates =
+    brushesCoordinates ||
+    d3.select(target).select("#brushesCoordinates").node() ||
+    d3.create("div").attr("id", "brushesCoordinates").node();
   groupsElement =
     groupsElement ||
     d3.select(target).select("#brushesGroups").node() ||
@@ -223,7 +231,10 @@ function TimeWidget(
       .querySelector("button#btnAddBrushGroup")
       .addEventListener("click", onAddBrushGroup);
 
-    if (showBrushesControls) divOverview.appendChild(groupsElement);
+    if (showBrushesControls) {
+      d3.select(groupsElement).insert("h3", ":first-child").text("Groups:");
+      divControls.appendChild(groupsElement);
+    }
   }
 
   function computeBrushColor(groupId) {
@@ -553,15 +564,8 @@ function TimeWidget(
 
   function init() {
     //CreateOverView
-    divControls = d3
-      .select(divOverview)
-      .selectAll("div#controls")
-      .data([1])
-      .join("div")
-      .attr("id", "controls")
-      .style("margin-top", `${ts.margin.top}px`);
-
-    divData = divControls
+    divData = d3
+      .select(divControls)
       .selectAll("div#divData")
       .data([1])
       .join("div")
@@ -786,6 +790,8 @@ function TimeWidget(
       .style("cursor", "pointer")
       .on("click", onAddBrushGroup);
 
+    divOverview.appendChild(divControls);
+    initBrushCoordinates();
     initBrushesControls();
 
     return g;
@@ -829,9 +835,10 @@ function TimeWidget(
     sy1.node().value = "";
   }
 
-  function generateBrushCoordinatesDiv() {
-    divBrushesCoordinates.node().innerHTML = "";
-    let divX = divBrushesCoordinates.append("div");
+  function initBrushCoordinates() {
+    brushesCoordinates.innerHTML = "";
+    let selection = d3.select(brushesCoordinates);
+    let divX = selection.append("div");
 
     divX.append("span").text(xLabel);
 
@@ -839,6 +846,7 @@ function TimeWidget(
 
     let domainX = overviewX.domain();
     let x0 = divInputX
+      .append("div")
       .append("input")
       .attr("type", hasScaleTime ? "Date" : "number")
       .attr("min", hasScaleTime ? fmtX(domainX[0]) : domainX[0])
@@ -849,6 +857,7 @@ function TimeWidget(
       .on("change", onSpinboxChange);
 
     let x1 = divInputX
+      .append("div")
       .append("input")
       .attr("type", hasScaleTime ? "Date" : "number")
       .attr("min", hasScaleTime ? fmtX(domainX[0]) : domainX[0])
@@ -858,7 +867,7 @@ function TimeWidget(
       // .style("background-color", ts.backgroundColor)
       .on("change", onSpinboxChange);
 
-    let divY = divBrushesCoordinates.append("div");
+    let divY = selection.append("div");
 
     divY.append("span").text(yLabel);
 
@@ -867,6 +876,7 @@ function TimeWidget(
     let domainY = overviewY.domain();
 
     let y0 = divInputY
+      .append("div")
       .append("input")
       .attr("type", "number")
       .attr("min", domainY[0])
@@ -877,6 +887,7 @@ function TimeWidget(
       .on("change", onSpinboxChange);
 
     let y1 = divInputY
+      .append("div")
       .append("input")
       .attr("type", "number")
       .attr("min", domainY[0])
@@ -890,6 +901,13 @@ function TimeWidget(
       [x0, y0],
       [x1, y1],
     ];
+
+    if (showBrushesCoordinates) {
+      selection
+        .insert("h3", ":first-child")
+        .text("Current TimeBox Coordinates:");
+      divControls.appendChild(brushesCoordinates);
+    }
   }
 
   function generateDataSelectionDiv() {
@@ -971,6 +989,7 @@ function TimeWidget(
       });
 
       timelineDetails.setScales({ overviewX, overviewY });
+      if (showDetails) divOverview.appendChild(detailsElement);
     }
   }
 
@@ -1674,7 +1693,6 @@ function TimeWidget(
 
     // Limit the number of timelines
     if (maxTimelines) groupedData = groupedData.slice(0, maxTimelines);
-
     init();
 
     timelineOverview.setScales({
@@ -1684,7 +1702,6 @@ function TimeWidget(
     timelineOverview.data(groupedData);
 
     generateDataSelectionDiv();
-    generateBrushCoordinatesDiv();
 
     initDetails({ overviewX, overviewY });
 
@@ -1737,7 +1754,7 @@ function TimeWidget(
   // Make the ts object accessible
   divOverview.ts = ts;
   divOverview.details = detailsElement;
-  divOverview.brushesCoordinates = divBrushesCoordinates.node();
+  divOverview.brushesCoordinates = brushesCoordinates;
   divOverview.groups = groupsElement;
   return divOverview;
 }
