@@ -221,9 +221,8 @@ function TimeWidget(
 
   function initBrushesControls() {
     groupsElement.innerHTML = `<div style="flex-basis:100%;">
-    <ul id="brushesList">
-      
-    </ul>
+    <div id="brushesList">
+    </div>
     <button id="btnAddBrushGroup">Add Group</button>
     </div>`;
 
@@ -368,29 +367,29 @@ function TimeWidget(
       .select("#brushesList")
       .selectAll(".brushControl")
       .data(brushes.getBrushesGroup(), (d) => d[0])
-      .join("li")
+      .join("div")
       .attr("class", "brushControl")
       .each(function (d, i, n) {
         let groupsSize = n.length;
 
-        const li = d3.select(this);
+        const div = d3.select(this);
         let groupName = d[1].name;
         let groupCount = renderSelected.has(d[0])
           ? renderSelected.get(d[0]).length
           : 0;
-        li.node().innerHTML = `<div style="
+        div.node().innerHTML = `<div style="
             display: flex;
-            flex-wrap: nowrap;        
+            flex-wrap: nowrap;
             align-items: center;
           ">
             <input type="checkbox" id="checkBoxShowBrushGroup" ${
               d[1].isEnable ? "checked" : ""
-            } ></input>                        
-            <div 
+            } ></input>
+            <div
               id="groupColor"
               style="
-              min-width: ${ts.brushGroupSize}px; 
-              width: ${ts.brushGroupSize}px; 
+              min-width: ${ts.brushGroupSize}px;
+              width: ${ts.brushGroupSize}px;
               height: ${ts.brushGroupSize}px;
               background-color: ${computeBrushColor(d[0])};
               border-width: ${
@@ -401,12 +400,12 @@ function TimeWidget(
               margin-right: 5px;
               cursor: pointer;
             "></div>
-            <input 
+            <input
               id="groupName"
               style="margin-right: 5px; border: none;outline: none; width: ${
                 groupName.length
               }ch;"
-              contenteditable="true" 
+              contenteditable="true"
               value="${groupName}"></input>
             <span id="groupSize" style="margin-right: 5px;">(${groupCount})</span>
            <button style="color: red;font-weight: bold; border:none; background:none;
@@ -416,27 +415,27 @@ function TimeWidget(
           </div>
         `;
 
-        li.select("input#groupName").on("input", function (evt) {
+        div.select("input#groupName").on("input", function (evt) {
           // Only update the name on change
 
           // make the input fit the content
           d3.select(this).style("width", evt.target.value.length + "ch");
         });
-        li.select("input#groupName").on("change", (evt) => {
+        div.select("input#groupName").on("change", (evt) => {
           // make the input fit the content
           d3.select(this).style("width", evt.target.value.length + "ch");
           brushes.updateBrushGroupName(d[0], evt.target.value);
           triggerValueUpdate();
         });
-        li.select("#btnRemoveBrushGroup").on("click", (event) => {
+        div.select("#btnRemoveBrushGroup").on("click", (event) => {
           event.stopPropagation();
           onRemoveBrushGroup(d[0]);
         });
-        li.select("#checkBoxShowBrushGroup").on("click", (event) => {
+        div.select("#checkBoxShowBrushGroup").on("click", (event) => {
           //Prevent the event from reaching the element li
           event.stopPropagation();
         });
-        li.select("#checkBoxShowBrushGroup").on("change", (event) => {
+        div.select("#checkBoxShowBrushGroup").on("change", (event) => {
           event.stopPropagation();
           onChangeBrushGroupState(d[0], event.target.checked);
           console.log(
@@ -446,8 +445,12 @@ function TimeWidget(
         });
 
         // Select only on the box and size
-        li.select("div#groupColor").on("click", () => onSelectBrushGroup(d[0]));
-        li.select("span#groupSize").on("click", () => onSelectBrushGroup(d[0]));
+        div
+          .select("div#groupColor")
+          .on("click", () => onSelectBrushGroup(d[0]));
+        div
+          .select("span#groupSize")
+          .on("click", () => onSelectBrushGroup(d[0]));
       });
 
     // Render the nonSelected Group always on bottom of list
@@ -458,7 +461,7 @@ function TimeWidget(
 
     d3.select(groupsElement)
       .select("#brushesList")
-      .append("li")
+      .append("div")
       .attr("class", "nonSelectedControl")
       .each(function () {
         const li = d3.select(this);
@@ -467,13 +470,14 @@ function TimeWidget(
 
         li.node().innerHTML = `<div style="
             display: flex;
-            flex-wrap: nowrap;        
+            flex-wrap: nowrap;
             align-items: center;
+            margin-bottom: 5px;
           ">
             <input type="checkbox" id="checkBoxShowBrushGroup" ${
               showNonSelected ? "checked" : ""
-            } ></input>                        
-            <output 
+            } ></input>
+            <output
               style="margin-right: 0; border: none;outline: none; width: ${
                 groupName.length
               }ch;"
@@ -1357,6 +1361,23 @@ function TimeWidget(
     divOverview.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  // Converts the brushes map into an array
+  function convertBrushMapToArray(
+    map,
+    { getRepresentative = (v) => v[0], groupAttributeName = "tw_group" } = {}
+  ) {
+    return [...map.entries()]
+      .map(([group, d]) => {
+        const oneRepresentativePerObject = [...d.values()].map((v) => {
+          const representative = getRepresentative(v);
+          representative[groupAttributeName] = group;
+          return representative;
+        });
+        return oneRepresentativePerObject;
+      })
+      .flat();
+  }
+
   // Triggers the update of the selection calls callback and dispatches input event
   function triggerValueUpdate(sel = renderSelected) {
     let value = new Map();
@@ -1376,6 +1397,8 @@ function TimeWidget(
     divOverview.value.selectedGroup = brushes
       .getBrushesGroup()
       .get(brushes.getBrushGroupSelected()).name;
+    divOverview.value.asArray = (params) =>
+      convertBrushMapToArray(value, params);
     divOverview.extent = {
       x: overviewX.domain(),
       y: overviewY.domain(),
@@ -1574,14 +1597,14 @@ function TimeWidget(
         for (let brush of brushGroup[1].entries()) {
           if (brush[1].selection !== null) {
             let nBrush = Object.assign({}, brush[1]);
-  
+
             // pixels
             let [[x0, y0], [x1, y1]] = brush[1].selection;
             nBrush.selectionPixels = [
               [x0, y0],
               [x1, y1],
             ];
-  
+
             // data domain
             let [[xi0, yi0], [xi1, yi1]] = brush[1].selection.map(([x, y]) => [
               overviewX.invert(x),
@@ -1591,9 +1614,9 @@ function TimeWidget(
               [xi0, yi0],
               [xi1, yi1],
             ];
-  
+
             nBrush.isActive = !!selectedBrush && selectedBrush[0] === brush[0];
-  
+
             innerMap.set(brush[0], nBrush);
           }
         }
