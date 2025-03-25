@@ -32,6 +32,8 @@ function TimeWidget(
     yDomain, // Defines the domain to be used in the y scale.
     yLabel = "",
     xLabel = "",
+    xTicks, //Allows to use custom strings as ticks on the X-axis independently of the X-scale. A vector of [xValue,Label] pairs is expected. Note that only the defined elements are displayed.
+    yTicks, //Allows to use custom strings as ticks on the y-axis independently of the y-scale. A vector of [yValue,Label] pairs is expected. Note that only the defined elements are displayed.
     filters = [], // Array of filters to use, format [[x1, y1], [x2, y2], ...]
     /* Color Configuration */
     defaultAlpha = 0.7, // Default transparency (when no selection is active) of drawn lines
@@ -642,12 +644,19 @@ function TimeWidget(
         }
       });
 
+    let yAxis = d3.axisLeft(overviewY);
+    if (yTicks) {
+      yAxis
+        .tickValues(yTicks.map((d) => d[0]))
+        .tickFormat((d, i) => (yTicks[i][1] ? yTicks[i][1] : yTicks[i][0]));
+    }
+
     let gmainY = g
       .selectAll("g.mainYAxis")
       .data([1])
       .join("g")
       .attr("class", "mainYAxis")
-      .call(d3.axisLeft(overviewY))
+      .call(yAxis)
       .call((axis) =>
         axis
           .selectAll("text.label")
@@ -675,12 +684,19 @@ function TimeWidget(
         .style("pointer-events", "none");
     }
 
+    let xAxis = d3.axisBottom(overviewX ? overviewX : g);
+    if (xTicks) {
+      xAxis
+        .tickValues(xTicks.map((d) => d[0]))
+        .tickFormat((d, i) => (xTicks[i][1] ? xTicks[i][1] : xTicks[i][0]));
+    }
+
     let gmainx = g
       .selectAll("g.mainXAxis")
       .data([1])
       .join("g")
       .attr("class", "mainXAxis")
-      .call(d3.axisBottom(overviewX ? overviewX : g))
+      .call(xAxis)
       .attr(
         "transform",
         `translate(0, ${height - ts.margin.top - ts.margin.bottom})`

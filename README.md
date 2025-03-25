@@ -192,6 +192,8 @@ This section will show all possible options grouped by categories.
  - **fmtY**: Function, how to format x points in the tooltip. Note that it must conform to the data type provided in Y.
  - **xLabel**: Label to show in the X axis
  - **yLabel**: Label to show in the Y axis
+ - **xTicks**: Allows to use custom strings as ticks on the X-axis independently of the X-scale. A vector of [xValue,Label] pairs is expected. Note that only the defined elements are displayed and xValue must belong to the domain of X.
+ - **yTicks**: Allows to use custom strings as ticks on the y-axis independently of the y-scale. A vector of [yValue,Label] pairs is expected. Note that only the defined elements are displayed and yValue must belong to the domain of X.
  - **filters**: Array of predefined TimeGroups and TimeBoxes. [Example](https://observablehq.com/d/29228e86855505e2?collection=@ivelascog/timesearcherplus)
 ### Color Configuration
  - **defaultAlpha**: Default transparency (when no selection is active) of drawn lines
