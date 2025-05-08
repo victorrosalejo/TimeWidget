@@ -105,9 +105,10 @@ function brushInteraction({
     ]);
   }
 
-  function onContextMenuChange(mode, aggregation, brush) {
+  function onContextMenuChange(mode, aggregation, not, brush) {
     brush[1].mode = mode;
     brush[1].aggregation = aggregation;
+    brush[1].negate = not;
     updateBrush(brush);
     brushFilter();
   }
@@ -398,6 +399,14 @@ function brushInteraction({
         );
     }
 
+    if (brush.negate) {
+      let allKeys = new Set(data.map(d => d[0]));
+      for (const key of newIntersections) {
+        allKeys.delete(key);
+      }
+      newIntersections = allKeys;
+    }
+
     // Draw the handles in contains brushes
     updateBrushHandles();
 
@@ -420,6 +429,12 @@ function brushInteraction({
             : "none"
         )
         .style("opacity", 0.4);
+
+      // Color the handles different if the brush is negate
+      d3.select(this)
+          .selectAll(".handle--n, .handle--s")
+          .style("fill", brush.negate ? "red" : "none")
+          .style("opacity", 0.4);
 
       // Brush tooltip help text
       d3.select(this)
@@ -528,6 +543,7 @@ function brushInteraction({
         brushContextMenu.__show(
           brushValue.mode,
           brushValue.aggregation,
+          brushValue.negate,
           px,
           py,
           d
@@ -932,6 +948,7 @@ function brushInteraction({
       intersections: null,
       mode: mode,
       aggregation: aggregation,
+      negate: false,
       isSelected: false,
       group: group,
       selection: selection,

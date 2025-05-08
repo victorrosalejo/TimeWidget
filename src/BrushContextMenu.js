@@ -4,6 +4,7 @@ import { BrushAggregation, BrushModes, log } from "./utils.js";
 function BrushContextMenu({ target, callback }) {
   const intersectE = htl.html`<input type="radio" name="mode" id="__ts_c_intersect" value="intersect">`;
   const containsE = htl.html`<input type="radio" name="mode" id="__ts_c_contains" value="contains">`;
+  const notE = htl.html`<input type="checkbox"  id="__ts_c_not">`;
   const andE = htl.html`<input type="radio" name="aggregation" id="__ts_c_and" value="and">`;
   const orE = htl.html`<input type="radio" name="aggregation" id="__ts_c_or" value="or">`;
   const closeBtn = htl.html`<button style="position: absolute; right: 0; top: 0; padding: 0; margin: 0; border: none; background: none; cursor: pointer; font-size: 0.8rem; color: #444; line-height: 1; padding: 2px 2px;">&times;</button>`;
@@ -12,6 +13,7 @@ function BrushContextMenu({ target, callback }) {
   containsE.onchange = onChange;
   andE.onchange = onChange;
   orE.onchange = onChange;
+  notE.onchange = onChange;
 
   let _brush;
 
@@ -27,6 +29,10 @@ function BrushContextMenu({ target, callback }) {
           <div>
             ${containsE}
             <label for="__ts_c_contains" title="Search for timelines that are fully contained in the timebox">Contains</label>
+          </div>
+          <div>
+            ${notE}
+            <label for="__ts_c_not" title=" ">Not</label>
           </div>
         </div>
       
@@ -97,11 +103,12 @@ function BrushContextMenu({ target, callback }) {
     let brushAggregation = andE.checked
       ? BrushAggregation.And
       : BrushAggregation.Or;
-    callback(brushMode, brushAggregation, _brush);
+    let brushNot = notE.checked;
+    callback(brushMode, brushAggregation, brushNot, _brush);
   }
 
   contextMenu.__hide = () => (contextMenu.style.display = "none");
-  contextMenu.__show = (mode, aggregation, pxX, pxY, brush) => {
+  contextMenu.__show = (mode, aggregation,not, pxX, pxY, brush) => {
     _brush = brush;
     switch (mode) {
       case BrushModes.Intersect:
@@ -116,6 +123,8 @@ function BrushContextMenu({ target, callback }) {
           "🚫 ERROR The method elected to compute the selection are not support"
         );
     }
+
+    notE.checked = not;
 
     switch (aggregation) {
       case BrushAggregation.And:
