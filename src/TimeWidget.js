@@ -1672,10 +1672,56 @@ function TimeWidget(
       .join("path")
       .attr("class", "referenceCurve")
       .attr("d", (c) => line2(c.data))
-      .attr("stroke-width", 2)
+      .attr("stroke-width", (c) => c.strokeWidth || 2)
       .style("fill", "none")
       .style("stroke", (c) => c.color)
       .style("opacity", (c) => c.opacity);
+  };
+
+  // Función simple para dibujar líneas algebraicas
+  ts.addAlgebraicLine = function(equation, options = {}) {
+    if (!overviewX) return;
+    
+    const {
+      color = "#ff0000",
+      opacity = 0.8,
+      strokeWidth = 2,
+      numPoints = 100,
+      xRange = null
+    } = options;
+
+    // Usar el dominio actual si no se especifica rango
+    const domainX = xRange || overviewX.domain();
+    const [xMin, xMax] = domainX;
+    const step = (xMax - xMin) / (numPoints - 1);
+    
+    // Generar puntos de la función algebraica
+    const points = [];
+    for (let i = 0; i < numPoints; i++) {
+      const xVal = xMin + i * step;
+      try {
+        const yVal = equation(xVal);
+        if (isFinite(yVal)) {
+          points.push([xVal, yVal]);
+        }
+      } catch (e) {
+        // Ignorar puntos donde la función no está definida
+        continue;
+      }
+    }
+
+    if (points.length === 0) return;
+
+    // Crear curva de referencia
+    const curve = {
+      data: points,
+      color: color,
+      opacity: opacity,
+      strokeWidth: strokeWidth
+    };
+
+    // Usar el sistema existente de referencias
+    ts.addReferenceCurves([curve]);
   };
 
   ts.updateCallback = function (_) {
