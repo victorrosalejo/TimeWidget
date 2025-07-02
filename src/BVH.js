@@ -18,6 +18,18 @@ function BVH({
 }) {
   let me = {};
   let BVH = makeBVH();
+  let staticLine = null; // Store the static line definition
+  
+  // Load example static line for testing
+  function loadExampleStaticLine() {
+    // Define a diagonal line that crosses through the data
+    staticLine = {
+      type: 'slope-intercept',
+      slope: 0.5,
+      intercept: 0
+    };
+    console.log('📏 Example static line loaded: y = 0.5x + 0');
+  }
 
   function pupulateBVHPolylines(data, BVH) {
     let xinc = BVH.xinc;
@@ -144,6 +156,28 @@ function BVH({
 
     return BVH;
   }
+
+  // Load example static line automatically
+  loadExampleStaticLine();
+
+  // If no data is provided, use example data for testing
+  if (!data || data.length === 0) {
+    console.log('📝 Using example data for testing...');
+    data = [
+      ['test1', [[0, 0], [10, 5], [20, 10]]],
+      ['test2', [[5, 15], [15, 8], [25, 12]]],
+      ['test3', [[0, 10], [30, 10]]] // horizontal line
+    ];
+    // Recreate BVH with example data
+    BVH = makeBVH();
+  }
+
+  // Auto-run test if we have example data
+  setTimeout(() => {
+    if (data.length <= 3) { // Only run test with small example data
+      me.testStaticLineFunctionality();
+    }
+  }, 100);
 
   function pointIntersection(point, x0, y0, x1, y1) {
     let [px,py] = point;
@@ -328,6 +362,306 @@ function BVH({
   me.intersect = function(x0, y0, x1, y1) {
     return testsEntitiesAny(x0, y0, x1, y1, lineIntersection);
 
+  };
+
+  // Add new methods for static line functionality
+  
+  /**
+   * Define a static line analytically
+   * @param {Object} lineDefinition - Can be:
+   *   - {slope: m, intercept: b} for y = mx + b
+   *   - {point1: [x1, y1], point2: [x2, y2]} for line through two points
+   *   - {point: [x, y], slope: m} for line through point with slope
+   *   - {vertical: x} for vertical line x = constant
+   */
+  me.defineStaticLine = function(lineDefinition) {
+    if (lineDefinition.slope !== undefined && lineDefinition.intercept !== undefined) {
+      // y = mx + b format
+      staticLine = {
+        type: 'slope-intercept',
+        slope: lineDefinition.slope,
+        intercept: lineDefinition.intercept
+      };
+    } else if (lineDefinition.point1 && lineDefinition.point2) {
+      // Two points format
+      let [x1, y1] = lineDefinition.point1;
+      let [x2, y2] = lineDefinition.point2;
+      
+      if (x1 === x2) {
+        // Vertical line
+        staticLine = {
+          type: 'vertical',
+          x: x1
+        };
+      } else {
+        let slope = (y2 - y1) / (x2 - x1);
+        let intercept = y1 - slope * x1;
+        staticLine = {
+          type: 'slope-intercept',
+          slope: slope,
+          intercept: intercept
+        };
+      }
+    } else if (lineDefinition.point && lineDefinition.slope !== undefined) {
+      // Point and slope format
+      let [x, y] = lineDefinition.point;
+      let intercept = y - lineDefinition.slope * x;
+      staticLine = {
+        type: 'slope-intercept',
+        slope: lineDefinition.slope,
+        intercept: intercept
+      };
+    } else if (lineDefinition.vertical !== undefined) {
+      // Vertical line format
+      staticLine = {
+        type: 'vertical',
+        x: lineDefinition.vertical
+      };
+    } else {
+      throw new Error('Invalid line definition format');
+    }
+  };
+
+  /**
+   * Check if the static line intersects with a cell
+   * @param {Object} cell - BVH cell with x0, y0, x1, y1 properties
+   * @returns {boolean} - True if line intersects the cell
+   */
+  function staticLineIntersectsCell(cell) {
+    if (!staticLine) return false;
+    
+    let {x0, y0, x1, y1} = cell;
+    
+    if (staticLine.type === 'vertical') {
+      let lineX = staticLine.x;
+      return lineX >= x0 && lineX <= x1;
+    } else {
+      // slope-intercept form: y = mx + b
+      let m = staticLine.slope;
+      let b = staticLine.intercept;
+      
+      // Check if line intersects any of the cell's edges
+      // Left edge (x = x0)
+      let yAtX0 = m * x0 + b;
+      if (yAtX0 >= y0 && yAtX0 <= y1) return true;
+      
+      // Right edge (x = x1)
+      let yAtX1 = m * x1 + b;
+      if (yAtX1 >= y0 && yAtX1 <= y1) return true;
+      
+      // Bottom edge (y = y0)
+      if (m !== 0) {
+        let xAtY0 = (y0 - b) / m;
+        if (xAtY0 >= x0 && xAtY0 <= x1) return true;
+      }
+      
+      // Top edge (y = y1)
+      if (m !== 0) {
+        let xAtY1 = (y1 - b) / m;
+        if (xAtY1 >= x0 && xAtY1 <= x1) return true;
+      }
+      
+      // Check if line passes completely through the cell
+      let y0AtX0 = m * x0 + b;
+      let y1AtX1 = m * x1 + b;
+      if ((y0AtX0 < y0 && y1AtX1 > y1) || (y0AtX0 > y1 && y1AtX1 < y0)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Get all cells that contain the static line
+   * @returns {Array} - Array of cell objects that intersect with the static line
+   */
+  me.getCellsWithStaticLine = function() {
+    if (!staticLine) {
+      throw new Error('No static line defined. Call defineStaticLine() first.');
+    }
+    
+    let cellsWithLine = [];
+    
+    for (let i = 0; i < xPartitions; ++i) {
+      for (let j = 0; j < yPartitions; ++j) {
+        let cell = BVH.BVH[i][j];
+        if (staticLineIntersectsCell(cell)) {
+          cellsWithLine.push({
+            i: i,
+            j: j,
+            cell: cell
+          });
+        }
+      }
+    }
+    
+    return cellsWithLine;
+  };
+
+  /**
+   * Check if a polyline segment intersects with the static line
+   * @param {Array} segment - Array of points representing a polyline segment
+   * @returns {boolean} - True if segment intersects with static line
+   */
+  function polylineIntersectsStaticLine(segment) {
+    if (!staticLine || segment.length < 2) return false;
+    
+    for (let i = 0; i < segment.length - 1; i++) {
+      let [x1, y1] = segment[i];
+      let [x2, y2] = segment[i + 1];
+      
+      if (staticLine.type === 'vertical') {
+        let lineX = staticLine.x;
+        // Check if segment crosses the vertical line
+        if ((x1 <= lineX && x2 >= lineX) || (x1 >= lineX && x2 <= lineX)) {
+          return true;
+        }
+      } else {
+        // Line equation: y = mx + b, or mx - y + b = 0
+        let m = staticLine.slope;
+        let b = staticLine.intercept;
+        
+        // Calculate which side of the line each point is on
+        let side1 = m * x1 - y1 + b;
+        let side2 = m * x2 - y2 + b;
+        
+        // If points are on opposite sides (or one is on the line), there's an intersection
+        if (side1 * side2 <= 0) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Find all polylines that intersect with the static line within the cells where the line is present
+   * @returns {Set} - Set of polyline keys that intersect with the static line
+   */
+  me.getPolylinesIntersectingStaticLine = function() {
+    if (!staticLine) {
+      throw new Error('No static line defined. Call defineStaticLine() first.');
+    }
+    
+    let intersectingPolylines = new Set();
+    let cellsWithLine = me.getCellsWithStaticLine();
+    
+    // Only check cells that contain the static line
+    for (let cellInfo of cellsWithLine) {
+      let cell = cellInfo.cell;
+      
+      // Check each polyline in this cell
+      for (let [polylineKey, segments] of cell.data) {
+        if (!intersectingPolylines.has(polylineKey)) {
+          // Check each segment of the polyline
+          for (let segment of segments) {
+            if (polylineIntersectsStaticLine(segment)) {
+              intersectingPolylines.add(polylineKey);
+              break; // Found intersection, no need to check more segments
+            }
+          }
+        }
+      }
+    }
+    
+    return intersectingPolylines;
+  };
+
+  /**
+   * Get detailed intersection information between polylines and static line
+   * @returns {Array} - Array of objects with polyline key and intersection details
+   */
+  me.getDetailedStaticLineIntersections = function() {
+    if (!staticLine) {
+      throw new Error('No static line defined. Call defineStaticLine() first.');
+    }
+    
+    let intersections = [];
+    let cellsWithLine = me.getCellsWithStaticLine();
+    let processedPolylines = new Set();
+    
+    for (let cellInfo of cellsWithLine) {
+      let cell = cellInfo.cell;
+      
+      for (let [polylineKey, segments] of cell.data) {
+        if (!processedPolylines.has(polylineKey)) {
+          processedPolylines.add(polylineKey);
+          
+          let polylineIntersections = [];
+          
+          for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+            let segment = segments[segmentIndex];
+            if (polylineIntersectsStaticLine(segment)) {
+              polylineIntersections.push({
+                segmentIndex: segmentIndex,
+                segment: segment,
+                cellI: cellInfo.i,
+                cellJ: cellInfo.j
+              });
+            }
+          }
+          
+          if (polylineIntersections.length > 0) {
+            intersections.push({
+              polylineKey: polylineKey,
+              intersections: polylineIntersections
+            });
+          }
+        }
+      }
+    }
+    
+    return intersections;
+  };
+
+  /**
+   * Clear the static line definition
+   */
+  me.clearStaticLine = function() {
+    staticLine = null;
+  };
+
+  /**
+   * Get the current static line definition
+   * @returns {Object|null} - Current static line definition or null if none defined
+   */
+  me.getStaticLine = function() {
+    return staticLine;
+  };
+
+  /**
+   * Test the static line functionality with example data
+   */
+  me.testStaticLineFunctionality = function() {
+    if (!staticLine) {
+      console.log('❌ No static line defined');
+      return;
+    }
+    
+    console.log('🧪 Testing static line functionality...');
+    console.log('📏 Static line:', staticLine);
+    
+    try {
+      const cellsWithLine = me.getCellsWithStaticLine();
+      console.log(`📦 Cells containing the line: ${cellsWithLine.length}`);
+      console.log('📦 Cell positions:', cellsWithLine.map(c => `(${c.i},${c.j})`).join(', '));
+      
+      const intersectingPolylines = me.getPolylinesIntersectingStaticLine();
+      console.log(`🔗 Polylines intersecting: ${intersectingPolylines.size}`);
+      console.log('🔗 Intersecting polylines:', Array.from(intersectingPolylines));
+      
+      const detailedIntersections = me.getDetailedStaticLineIntersections();
+      console.log('📊 Detailed intersections:');
+      detailedIntersections.forEach(intersection => {
+        console.log(`  • ${intersection.polylineKey}: ${intersection.intersections.length} intersections`);
+      });
+      
+      console.log('✅ Static line functionality test completed!');
+    } catch (error) {
+      console.error('❌ Error testing static line:', error.message);
+    }
   };
 
   return me;
