@@ -5741,16 +5741,49 @@ function TimeWidget(
     // Usar el dominio actual si no se especifica rango
     const domainX = xRange || overviewX.domain();
     const [xMin, xMax] = domainX;
-    const step = (xMax - xMin) / (numPoints - 1);
+    
+    // Determinar si estamos trabajando con fechas o números
+    const isTimeScale = xMin instanceof Date;
+    
+    // Convertir dominio a números para generar los puntos
+    let xMinNum, xMaxNum;
+    
+    if (isTimeScale) {
+      // Para escalas de tiempo, convertir a números (milisegundos)
+      xMinNum = xMin.getTime();
+      xMaxNum = xMax.getTime();
+    } else {
+      // Para escalas lineales, usar directamente
+      xMinNum = Number(xMin);
+      xMaxNum = Number(xMax);
+    }
+    
+    const step = (xMaxNum - xMinNum) / (numPoints - 1);
     
     // Generar puntos de la función algebraica
     const points = [];
     for (let i = 0; i < numPoints; i++) {
-      const xVal = xMin + i * step;
+      const xNumVal = xMinNum + i * step;
+      
+      // Preparar el valor x para la ecuación según el tipo de escala
+      let xForEquation;
+      let xForData; // Valor que va en el array de datos final
+      
+      if (isTimeScale) {
+        // Para fechas, crear objeto Date y también guardarlo para los datos
+        xForEquation = new Date(xNumVal);
+        xForData = new Date(xNumVal);
+      } else {
+        // Para números, usar directamente
+        xForEquation = xNumVal;
+        xForData = xNumVal;
+      }
+      
       try {
-        const yVal = equation(xVal);
+        const yVal = equation(xForEquation);
         if (isFinite(yVal)) {
-          points.push([xVal, yVal]);
+          // Los datos deben estar en formato [x, y] en unidades de datos originales
+          points.push([xForData, yVal]);
         }
       } catch (e) {
         // Ignorar puntos donde la función no está definida
@@ -5758,9 +5791,12 @@ function TimeWidget(
       }
     }
 
-    if (points.length === 0) return;
+    if (points.length === 0) {
+      console.warn("No se generaron puntos v\xE1lidos para la l\xEDnea algebraica");
+      return;
+    }
 
-    // Crear curva de referencia
+    // Crear curva de referencia usando el formato estándar
     const curve = {
       data: points,
       color: color,
