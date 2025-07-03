@@ -1,4 +1,4 @@
-﻿﻿import * as d3 from "d3";
+﻿import * as d3 from "d3";
 import { add, intervalToDuration, sub } from "date-fns";
 
 import { eventType, log } from "./utils.js";
@@ -17,6 +17,7 @@ function TimeWidget(
     showBrushesCoordinates = true, // If false you can still use brushesCoordinatesElement to show the control on a different element on your app. For this use the exported value "brushesCoordinates"
     showDetails = true, // If false and with hasDetails = true, you can still use detailsElement to show the control on a different element on your app. For this use the exported value "details"
     /* Data */
+    //Add a new funtion calculator 
     x = (d) => d.x, // Attribute to show in the X axis (Note that it also supports functions)
     y = (d) => d.y, // Attribute to show in the Y axis (Note that it also supports functions)
     id = (d) => d.id, // Attribute to group the input data (Note that it also supports functions)
@@ -1641,124 +1642,129 @@ function TimeWidget(
       return outMap;
     } */
 
-  ts.addReferenceCurves = function (curves) {
-    if (!overviewX) return;
-    if (!Array.isArray(curves)) {
-      throw new Error("The reference curves must be an array of Objects");
-    }
-    let domainX = overviewX.domain();
-    let domainY = overviewY.domain();
-
-    curves.forEach((c) => {
-      c.data.sort((a, b) => d3.ascending(x(a), x(b)));
-      c.data = c.data.filter(
-        (p) =>
-          p[0] >= domainX[0] &&
-          p[0] <= domainX[1] &&
-          p[1] >= domainY[0] &&
-          p[1] <= domainY[1]
-      );
-    });
-
-    let line2 = d3
-      .line()
-      .defined((d) => d[1] !== undefined && d[1] !== null)
-      .x((d) => overviewX(d[0]))
-      .y((d) => overviewY(d[1]));
-
-    gReferences
-      .selectAll(".referenceCurve")
-      .data(curves)
-      .join("path")
-      .attr("class", "referenceCurve")
-      .attr("d", (c) => line2(c.data))
-      .attr("stroke-width", (c) => c.strokeWidth || 2)
-      .style("fill", "none")
-      .style("stroke", (c) => c.color)
-      .style("opacity", (c) => c.opacity);
-  };
-
-  // Función simple para dibujar líneas algebraicas
-  ts.addAlgebraicLine = function(equation, options = {}) {
-    if (!overviewX) return;
-    
-    const {
-      color = "#ff0000",
-      opacity = 0.8,
-      strokeWidth = 2,
-      numPoints = 100,
-      xRange = null
-    } = options;
-
-    // Usar el dominio actual si no se especifica rango
-    const domainX = xRange || overviewX.domain();
-    const [xMin, xMax] = domainX;
-    
-    // Determinar si estamos trabajando con fechas o números
-    const isTimeScale = xMin instanceof Date;
-    
-    // Convertir dominio a números para generar los puntos
-    let xMinNum, xMaxNum;
-    
-    if (isTimeScale) {
-      // Para escalas de tiempo, convertir a números (milisegundos)
-      xMinNum = xMin.getTime();
-      xMaxNum = xMax.getTime();
-    } else {
-      // Para escalas lineales, usar directamente
-      xMinNum = Number(xMin);
-      xMaxNum = Number(xMax);
-    }
-    
-    const step = (xMaxNum - xMinNum) / (numPoints - 1);
-    
-    // Generar puntos de la función algebraica
-    const points = [];
-    for (let i = 0; i < numPoints; i++) {
-      const xNumVal = xMinNum + i * step;
-      
-      // Preparar el valor x para la ecuación según el tipo de escala
-      let xForEquation;
-      let xForData; // Valor que va en el array de datos final
-      
-      if (isTimeScale) {
-        // Para fechas, crear objeto Date y también guardarlo para los datos
-        xForEquation = new Date(xNumVal);
-        xForData = new Date(xNumVal);
-      } else {
-        // Para números, usar directamente
-        xForEquation = xNumVal;
-        xForData = xNumVal;
+    ts.addReferenceCurves = function (curves) {
+      if (!overviewX) return;
+      if (!Array.isArray(curves)) {
+        throw new Error("The reference curves must be an array of Objects");
       }
-      
-      try {
-        const yVal = equation(xForEquation);
-        if (isFinite(yVal)) {
-          // Los datos deben estar en formato [x, y] en unidades de datos originales
-          points.push([xForData, yVal]);
+
+      let domainX = overviewX.domain();
+      let domainY = overviewY.domain();
+
+      // Process each curve and generate data if necessary
+      const processedCurves = curves.map((curve) => {
+        let processedCurve = { ...curve };
+        
+        // If it has a mathematical function, generate the points
+        if (curve.func && typeof curve.func === 'function') {
+          const numPoints = curve.numPoints || 500; // Improve based on relative error of points
+          const xMin = curve.domain ? curve.domain[0] : domainX[0];
+          const xMax = curve.domain ? curve.domain[1] : domainX[1];
+          const step = (xMax - xMin) / numPoints;
+          
+          const points = [];
+          for (let x = xMin; x <= xMax; x += step) {
+            try {
+              const y = curve.func(x);
+              if (isFinite(y) && !isNaN(y)) {
+                points.push([x, y]);
+              }
+            } catch (e) {
+              // Ignore points where the function is not defined
+            }
+          }
+          processedCurve.data = points;
         }
-      } catch (e) {
-        // Ignorar puntos donde la función no está definida
-        continue;
-      }
-    }
+        
+        // If it is a parametric curve
+        else if (curve.xFunc && curve.yFunc && typeof curve.xFunc === 'function' && typeof curve.yFunc === 'function') {
+          const numPoints = curve.numPoints || 500;
+          const tMin = curve.tRange ? curve.tRange[0] : 0;
+          const tMax = curve.tRange ? curve.tRange[1] : 2 * Math.PI;
+          const step = (tMax - tMin) / numPoints;
+          
+          const points = [];
+          for (let t = tMin; t <= tMax; t += step) {
+            try {
+              const x = curve.xFunc(t);
+              const y = curve.yFunc(t);
+              if (isFinite(x) && isFinite(y) && !isNaN(x) && !isNaN(y)) {
+                points.push([x, y]);
+              }
+            } catch (e) {
+              // Ignore points where the functions are not defined
+            }
+          }
+          processedCurve.data = points;
+        }
+        
+        // If it is a polynomial defined by coefficients
+        else if (curve.coefficients && Array.isArray(curve.coefficients)) {
+          const numPoints = curve.numPoints || 500;
+          const xMin = curve.domain ? curve.domain[0] : domainX[0];
+          const xMax = curve.domain ? curve.domain[1] : domainX[1];
+          const step = (xMax - xMin) / numPoints;
+          
+          const points = [];
+          for (let x = xMin; x <= xMax; x += step) {
+            let y = 0;
+            for (let i = 0; i < curve.coefficients.length; i++) {
+              y += curve.coefficients[i] * Math.pow(x, i);
+            }
+            if (isFinite(y) && !isNaN(y)) {
+              points.push([x, y]);
+            }
+          }
+          processedCurve.data = points;
+        }
+        
+        // If it already has data, use the existing ones
+        else if (!curve.data) {
+          console.warn('Curve without data, func, coefficients, or parametric functions. Skipping.', curve);
+          return null;
+        }
+        
+        return processedCurve;
+      }).filter(curve => curve !== null);
 
-    if (points.length === 0) {
-      console.warn("No se generaron puntos válidos para la línea algebraica");
-      return;
-    }
+      // Filter and sort data as before
+      processedCurves.forEach((c) => {
+        if (c.data && Array.isArray(c.data) && c.data.length > 0) {
+          c.data.sort((a, b) => d3.ascending(a[0], b[0]));
+          c.data = c.data.filter(
+            (p) =>
+              p[0] >= domainX[0] &&
+              p[0] <= domainX[1] &&
+              p[1] >= domainY[0] &&
+              p[1] <= domainY[1]
+          );
+        } else {
+          // If there are no valid data, mark the curve for removal
+          c.data = [];
+        }
+      });
 
-    // Crear curva de referencia usando el formato estándar
-    const curve = {
-      data: points,
-      color: color,
-      opacity: opacity,
-      strokeWidth: strokeWidth
+      // Filter curves without valid data
+      const validCurves = processedCurves.filter(c => c.data && c.data.length > 0);
+
+      let line2 = d3
+        .line()
+        .defined((d) => d[1] !== undefined && d[1] !== null)
+        .x((d) => overviewX(d[0]))
+        .y((d) => overviewY(d[1]));
+
+      gReferences
+        .selectAll(".referenceCurve")
+        .data(processedCurves)
+        .join("path")
+        .attr("class", "referenceCurve")
+        .attr("d", (c) => line2(c.data))
+        .attr("stroke-width", (c) => c.strokeWidth || 2)
+        .style("fill", "none")
+        .style("stroke", (c) => c.color || "#ff0000")
+        .style("opacity", (c) => c.opacity || 0.8)
+        .style("stroke-dasharray", (c) => c.dashArray || "none");
     };
-
-    // Usar el sistema existente de referencias
-    ts.addReferenceCurves([curve]);
-  };
 
   ts.updateCallback = function (_) {
     return arguments.length ? ((updateCallback = _), ts) : updateCallback;
@@ -1879,5 +1885,6 @@ function TimeWidget(
   divOverview.groups = groupsElement;
   return divOverview;
 }
+
 
 export default TimeWidget;
