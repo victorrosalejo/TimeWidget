@@ -19,7 +19,60 @@ function BVH({
   let me = {};
   let BVH = makeBVH();
 
+
+   
+  // Función auxiliar para calcular celdas BVH usando lógica de pupulateBVHPolylines
+  function calculateBVHCells(extractedPoints) {
+    console.log("Calculando celdas BVH para puntos extraídos:", extractedPoints);
+    let xinc = BVH.xinc;
+    let yinc = BVH.yinc;
+    let cellsInfo = [];
+    extractedPoints.forEach((d, index) => {
+      let xCoor = d[0] - BVH.offsetX;
+      let yCoor = d[1] - BVH.offsetY;
+     console.log("Offset",BVH.offsetX, BVH.offsetY);
+      if (xCoor != null && yCoor != null) {
+        let xIndex = Math.floor(xCoor / xinc);
+        let yIndex = Math.floor(yCoor / yinc);
+        console.log("Calculando celda para punto:", "-> Índices:", xIndex, yIndex);
+        
+        if (isNaN(xIndex) || isNaN(yIndex)) {
+          log("ERROR: xIndex or YIndex is NaN: XCoor: " + xCoor + "; yCoor: " + yCoor);
+        }
+
+        // Verificar límites (igual que en pupulateBVHPolylines)
+        let isValid = xIndex >= 0 && xIndex < BVH.BVH.length &&
+                      yIndex >= 0 && yIndex < BVH.BVH[0].length;
+
+        cellsInfo.push({
+          pointIndex: index,
+          point: d,
+          cellIndices: [xIndex, yIndex],
+          originalCoords: [d[0], d[1]],
+          adjustedCoords: [xCoor, yCoor],
+          isValid: isValid,
+          cell: isValid ? BVH.BVH[xIndex][yIndex] : null
+        });
+      } else {
+        // Manejar coordenadas nulas
+        cellsInfo.push({
+          pointIndex: index,
+          point: d,
+          cellIndices: [null, null],
+          originalCoords: [d[0], d[1]],
+          adjustedCoords: [xCoor, yCoor],
+          isValid: false,
+          cell: null
+        });
+      }
+    });
+
+    return cellsInfo;
+  }
+
+
   function pupulateBVHPolylines(data, BVH) {
+    console.log("Poblando BVH con polilíneas:", data,BVH);
     let xinc = BVH.xinc;
     let yinc = BVH.yinc;
     data.forEach((d) => {
@@ -30,9 +83,11 @@ function BVH({
         let current = d[1][i];
         let xCoor = current[0];
         let yCoor = current[1];
+        log("ERROR: xIndex or YIndex is NaN: XCoor: " + xCoor +"; yCoor: " + yCoor );
         if (xCoor != null && yCoor != null) {
           let xIndex = Math.floor(xCoor / xinc);
           let yIndex = Math.floor(yCoor / yinc);
+          console.log("Calculando celda para punto:", "-> Índices:", xIndex, yIndex);
           if (isNaN(xIndex) || isNaN(yIndex)) {
             log("ERROR: xIndex or YIndex is NaN: XCoor: " + xCoor +"; yCoor: " + yCoor );
           }
@@ -71,6 +126,7 @@ function BVH({
               }
             }
           }
+          
           lastXindex = xIndex;
           lastYindex = yIndex;
         }
@@ -87,6 +143,7 @@ function BVH({
         let [x, y] = point;
         let Iindex = Math.floor(x / xinc);
         let Jindex = Math.floor(y / yinc);
+        console.log("Calculando celda para punto:", point, "-> Índices:", Iindex, Jindex);
         let cell = BVH.BVH[Iindex][Jindex];
 
         if (cell.data.has(key)) {
@@ -103,6 +160,7 @@ function BVH({
     let allValues = data.map(d => d[1]).flat();
     let extentX = d3.extent(allValues, d => d[0]);
     let extentY = d3.extent(allValues, d => d[1]);
+    console.log("Extent X:", extentX, "Extent Y:", extentY);
     let width = (extentX[1] - extentX[0]) + 1;
     let height = (extentY[1] - extentY[0]) + 1;
     let xinc = width / xPartitions;
@@ -135,7 +193,7 @@ function BVH({
 
     // Move the data to start at coordinates [0,0]
     data = data.map(([k, v]) => [k, v.map(([x, y]) => [x - BVH.offsetX, y - BVH.offsetY])]);
-
+    
 
     if (polylines)
       pupulateBVHPolylines(data, BVH);
@@ -327,8 +385,275 @@ function BVH({
 
   me.intersect = function(x0, y0, x1, y1) {
     return testsEntitiesAny(x0, y0, x1, y1, lineIntersection);
-
   };
+
+
+
+  // Método para procesar y simplificar líneas de referencia
+me.processReferenceLine = function(curve, lineId = "ref_line", overviewX = null, overviewY = null) {
+  if (!curve) {
+    log("❌ Error: Curva no válida");
+    return null;
+  }
+  
+  let gloablNumPoints = 100;  //MIRAR SI CONFIGURAR EL NUMERO DE PUTNOS DE LA CURVA
+
+  // Identificar tipo de curva y extraer puntos
+  let extractedPoints = extractPointsFromCurve(curve, gloablNumPoints);
+  
+  if (!extractedPoints || extractedPoints.length === 0) {
+    log("❌ Error: No se pudieron extraer puntos de la curva");
+    return null;
+  }
+  
+  // Imprimir en formato original de data
+  printCurveAnalysis(lineId, curve, extractedPoints, overviewX, overviewY);
+  
+  return extractedPoints;
+};
+
+// Función para extraer puntos según el tipo de curva
+function extractPointsFromCurve(curve, numPoints = gloablNumPoints) {
+  let points = [];
+  
+  // Tipo 1: Datos directos
+  if (curve.data && Array.isArray(curve.data)) {
+    log(`📊 Curva tipo: DATOS DIRECTOS (${curve.data.length} puntos)`);
+    // Tomar muestra uniforme de los puntos existentes
+    points = samplePoints(curve.data, numPoints);
+  }
+  
+  // Tipo 2: Función matemática
+  else if (curve.func && typeof curve.func === 'function') {
+    log(`📊 Curva tipo: FUNCIÓN MATEMÁTICA`);
+    let xMin = curve.domain ? curve.domain[0] : 0;
+    let xMax = curve.domain ? curve.domain[1] : 10;
+    points = generateFunctionPoints(curve.func, xMin, xMax, numPoints);
+  }
+  
+  // Tipo 3: Curva paramétrica
+  else if (curve.xFunc && curve.yFunc && 
+           typeof curve.xFunc === 'function' && 
+           typeof curve.yFunc === 'function') {
+    log(`📊 Curva tipo: CURVA PARAMÉTRICA`);
+    let tMin = curve.tRange ? curve.tRange[0] : 0;
+    let tMax = curve.tRange ? curve.tRange[1] : 2 * Math.PI;
+    points = generateParametricPoints(curve.xFunc, curve.yFunc, tMin, tMax, numPoints);
+  }
+  
+  // Tipo 4: Polinomio por coeficientes
+  else if (curve.coefficients && Array.isArray(curve.coefficients)) {
+    log(`📊 Curva tipo: POLINOMIO (grado ${curve.coefficients.length - 1})`);
+    let xMin = curve.domain ? curve.domain[0] : 0;
+    let xMax = curve.domain ? curve.domain[1] : 10;
+    points = generatePolynomialPoints(curve.coefficients, xMin, xMax, numPoints);
+  }
+  
+  else {
+    log(`❌ Tipo de curva no reconocido`);
+    return null;
+  }
+  
+  return points;
+}
+
+// Función para muestrear puntos uniformemente
+function samplePoints(originalPoints, numPoints) {
+  if (originalPoints.length <= numPoints) return originalPoints;
+  
+  let step = (originalPoints.length - 1) / (numPoints - 1);
+  let sampled = [];
+  
+  for (let i = 0; i < numPoints; i++) {
+    let index = Math.round(i * step);
+    sampled.push(originalPoints[index]);
+  }
+
+
+
+  return sampled;
+}
+
+// Función para generar puntos de función matemática
+function generateFunctionPoints(func, xMin, xMax, numPoints) {
+  let points = [];
+  let step = (xMax - xMin) / (numPoints - 1);
+  
+  for (let i = 0; i < numPoints; i++) {
+    let x = xMin + i * step;
+    try {
+      let y = func(x);
+      if (isFinite(y) && !isNaN(y)) {
+        points.push([x, y]);
+      }
+    } catch (e) {
+      log(`⚠️ Error evaluando función en x=${x}`);
+    }
+  }
+  
+  return points;
+}
+
+// Función para generar puntos de curva paramétrica
+function generateParametricPoints(xFunc, yFunc, tMin, tMax, numPoints) {
+  let points = [];
+  let step = (tMax - tMin) / (numPoints - 1);
+  
+  for (let i = 0; i < numPoints; i++) {
+    let t = tMin + i * step;
+    try {
+      let x = xFunc(t);
+      let y = yFunc(t);
+      if (isFinite(x) && isFinite(y) && !isNaN(x) && !isNaN(y)) {
+        points.push([x, y]);
+      }
+    } catch (e) {
+      log(`⚠️ Error evaluando funciones paramétricas en t=${t}`);
+    }
+  }
+  
+  return points;
+}
+
+// Función para generar puntos de polinomio
+function generatePolynomialPoints(coefficients, xMin, xMax, numPoints) {
+  let points = [];
+  let step = (xMax - xMin) / (numPoints - 1);
+  
+  for (let i = 0; i < numPoints; i++) {
+    let x = xMin + i * step;
+    let y = 0;
+    
+    // Evaluar polinomio: y = a0 + a1*x + a2*x² + ...
+    for (let j = 0; j < coefficients.length; j++) {
+      y += coefficients[j] * Math.pow(x, j);
+    }
+    
+    if (isFinite(y) && !isNaN(y)) {
+      points.push([x, y]);
+    }
+  }
+  
+  return points;
+}
+
+// Función para imprimir análisis de curva
+function printCurveAnalysis(lineId, curve, extractedPoints, overviewX = null, overviewY = null) {
+  console.log(`\n🔍 ANÁLISIS DE CURVA DE REFERENCIA: ${lineId}`);
+  console.log(`📋 Tipo identificado: ${getCurveType(curve)}`);
+  console.log(`📏 Puntos extraídos (${extractedPoints.length}):`);
+  
+  console.log(`🎯 ANÁLISIS DE CELDAS BVH USANDO pupulateBVHPolylines:`);
+  
+  // TRANSFORMAR puntos usando las escalas del BVH (simulando la transformación D3)
+  console.log(`🔄 Transformando puntos de coordenadas originales a espacio BVH...`);
+  let transformedPoints = extractedPoints.map(point => {
+    let [origX, origY] = point;
+    
+    let transformedX, transformedY;
+    
+    if (overviewX && overviewY) {
+      // Aplicar las escalas D3 como hace TimeWidget
+      transformedX = overviewX(origX);
+      transformedY = overviewY(origY);
+      console.log(`  Punto [${origX.toFixed(3)}, ${origY.toFixed(3)}] → Escalado [${transformedX.toFixed(3)}, ${transformedY.toFixed(3)}]`);
+    } else {
+      // Sin escalas, usar coordenadas originales
+      transformedX = origX;
+      transformedY = origY;
+      console.log(`  ⚠️ Sin escalas disponibles, usando punto original: [${origX.toFixed(3)}, ${origY.toFixed(3)}]`);
+    }
+    
+    return [transformedX, transformedY];
+  });
+  
+  // Formatear los puntos transformados como polilínea para pupulateBVHPolylines
+  // Formato: [[id, [[x0,y0],[x1,y1]...]]]
+  let polylineData = [[lineId, transformedPoints]];
+  
+  // Crear una copia temporal del BVH para hacer el análisis sin afectar el original
+  let tempBVH = JSON.parse(JSON.stringify(BVH));
+  
+  // Limpiar datos de la copia temporal
+  for (let i = 0; i < tempBVH.BVH.length; i++) {
+    for (let j = 0; j < tempBVH.BVH[i].length; j++) {
+      tempBVH.BVH[i][j].data = new Map();
+    }
+  }
+  
+  // Usar pupulateBVHPolylines para detectar celdas
+  console.log(`📌 Llamando pupulateBVHPolylines con datos transformados:`, polylineData);
+  pupulateBVHPolylines(polylineData, tempBVH);
+  
+  // Analizar resultados
+  let cellsOccupied = new Map();
+  let totalSegments = 0;
+  
+  for (let i = 0; i < tempBVH.BVH.length; i++) {
+    for (let j = 0; j < tempBVH.BVH[i].length; j++) {
+      let cell = tempBVH.BVH[i][j];
+      if (cell.data.has(lineId)) {
+        let segments = cell.data.get(lineId);
+        let cellKey = `[${i},${j}]`;
+        
+        cellsOccupied.set(cellKey, {
+          cellIndices: [i, j],
+          segmentCount: segments.length,
+          segments: segments,
+          cellBounds: {
+            x0: cell.x0,
+            y0: cell.y0,
+            x1: cell.x1,
+            y1: cell.y1
+          }
+        });
+        
+        totalSegments += segments.length;
+        
+        console.log(`  ✅ Celda [${i},${j}]: ${segments.length} segmento(s)`);
+        console.log(`     Límites: x[${cell.x0.toFixed(3)}, ${cell.x1.toFixed(3)}], y[${cell.y0.toFixed(3)}, ${cell.y1.toFixed(3)}]`);
+        
+        // Mostrar algunos puntos de los segmentos
+        segments.slice(0, 2).forEach((segment, segIdx) => {
+          console.log(`     Segmento ${segIdx + 1}: ${segment.length} puntos`);
+          if (segment.length > 0) {
+            let first = segment[0];
+            let last = segment[segment.length - 1];
+            console.log(`       Inicio: [${first[0].toFixed(3)}, ${first[1].toFixed(3)}]`);
+            if (segment.length > 1) {
+              console.log(`       Final:  [${last[0].toFixed(3)}, ${last[1].toFixed(3)}]`);
+            }
+          }
+        });
+        
+        if (segments.length > 2) {
+          console.log(`     ... y ${segments.length - 2} segmentos más`);
+        }
+      }
+    }
+  }
+  
+  console.log(`\n📊 RESUMEN DE ANÁLISIS CON pupulateBVHPolylines:`);
+  console.log(`Total de celdas ocupadas: ${cellsOccupied.size}`);
+  console.log(`Total de segmentos detectados: ${totalSegments}`);
+  
+  if (cellsOccupied.size === 0) {
+    console.log(`⚠️ No se detectaron celdas ocupadas. Verificar:`);
+    console.log(`  - Puntos originales:`, extractedPoints.slice(0, 3).map(p => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`));
+    console.log(`  - Offsetts BVH: X=${BVH.offsetX}, Y=${BVH.offsetY}`);
+    console.log(`  - Dimensiones BVH: ${BVH.width} x ${BVH.height}`);
+    console.log(`  - Incrementos: xinc=${BVH.xinc.toFixed(3)}, yinc=${BVH.yinc.toFixed(3)}`);
+  }
+}
+
+// Función auxiliar para identificar tipo de curva
+function getCurveType(curve) {
+  if (curve.data && Array.isArray(curve.data)) return "DATOS DIRECTOS";
+  if (curve.func && typeof curve.func === 'function') return "FUNCIÓN MATEMÁTICA";
+  if (curve.xFunc && curve.yFunc) return "CURVA PARAMÉTRICA";
+  if (curve.coefficients && Array.isArray(curve.coefficients)) return "POLINOMIO";
+  return "DESCONOCIDO";
+}
 
   return me;
 }

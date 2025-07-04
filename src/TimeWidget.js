@@ -1653,7 +1653,7 @@ function TimeWidget(
 
       // Process each curve and generate data if necessary
       const processedCurves = curves.map((curve) => {
-        let processedCurve = { ...curve };
+        let processedCurve = Object.assign({}, curve);
         
         // If it has a mathematical function, generate the points
         if (curve.func && typeof curve.func === 'function') {
@@ -1722,6 +1722,9 @@ function TimeWidget(
         else if (!curve.data) {
           console.warn('Curve without data, func, coefficients, or parametric functions. Skipping.', curve);
           return null;
+        } else {
+          // Mark as simple points if it's just an array of points (not generated from functions)
+          processedCurve.isSimplePoints = true;
         }
         
         return processedCurve;
@@ -1753,9 +1756,10 @@ function TimeWidget(
         .x((d) => overviewX(d[0]))
         .y((d) => overviewY(d[1]));
 
+      // Renderizar líneas para curvas generadas por funciones (no simples puntos)
       gReferences
         .selectAll(".referenceCurve")
-        .data(processedCurves)
+        .data(processedCurves.filter(c => !c.isSimplePoints))
         .join("path")
         .attr("class", "referenceCurve")
         .attr("d", (c) => line2(c.data))
@@ -1764,6 +1768,23 @@ function TimeWidget(
         .style("stroke", (c) => c.color || "#ff0000")
         .style("opacity", (c) => c.opacity || 0.8)
         .style("stroke-dasharray", (c) => c.dashArray || "none");
+
+      // Renderizar puntos para curvas que son solo arrays de puntos
+      const pointCurves = processedCurves.filter(c => c.isSimplePoints);
+      pointCurves.forEach((curve, curveIndex) => {
+        gReferences
+          .selectAll(`.referencePoints-${curveIndex}`)
+          .data(curve.data)
+          .join("circle")
+          .attr("class", `referencePoints-${curveIndex}`)
+          .attr("cx", (d) => overviewX(d[0]))
+          .attr("cy", (d) => overviewY(d[1]))
+          .attr("r", curve.pointRadius || 4)
+          .style("fill", curve.color || "#ff0000")
+          .style("opacity", curve.opacity || 0.8)
+          .style("stroke", curve.strokeColor || "white")
+          .style("stroke-width", curve.pointStrokeWidth || 1);
+      });
     };
 
   ts.updateCallback = function (_) {

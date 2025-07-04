@@ -1060,6 +1060,11 @@ function brushInteraction({
   newBrush();
   drawBrushes();
 
+  // Método para acceder al BVH desde el TimeWidget
+  me.getBVH = function() {
+    return BVH_;
+  };
+
   return me;
 }
 
