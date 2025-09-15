@@ -176,33 +176,35 @@ function pointSegmentDistance(p, a, b) {
 
 
 function RCIntersection(BVH) {
-  const eps = 0; //Un 100% de precisión en los puntos
+  const eps = 0; // precisión para puntos
+  // Estructura interna:
+  // refId -> ( dataId -> Map<key, Hit> )
   const collisions = new Map();
+  // Metadatos por referencia
+  const refMeta = new Map();
 
   const ensure = (refKey, dataKey) => {
     if (!collisions.has(refKey)) collisions.set(refKey, new Map());
-    const inner = collisions.get(refKey);
-    if (!inner.has(dataKey)) inner.set(dataKey, new Set()); 
-    return inner.get(dataKey);
+    const byData = collisions.get(refKey);
+    if (!byData.has(dataKey)) byData.set(dataKey, new Map());
+    return byData.get(dataKey); // Map<collisionKey, Hit>
   };
 
   for (let i = 0; i < BVH.BVH.length; i++) {
     for (let j = 0; j < BVH.BVH[i].length; j++) {
       const cell = BVH.BVH[i][j];
-
       if (cell.referenceLines.size === 0 || cell.data.size === 0) continue;
 
       for (const [dataKey, dataPolylines] of cell.data) {
         for (const [refKey, refObj] of cell.referenceLines) {
-          const refVal = refObj.data || refObj; // Compatibilidad hacia atrás
+          const refVal = refObj.data || refObj; // compatibilidad hacia atrás
           const collisionActive = refObj.collisionActive;
           const isSimplePoints = refObj.isSimplePoints;
-          
-          if (collisionActive !== true) {
-            continue;
-          }
 
-          
+          // guarda metadatos por ref
+          if (!refMeta.has(refKey)) refMeta.set(refKey, { isSimplePoints });
+
+          if (collisionActive !== true) continue;
           if (!refVal || refVal.length === 0) continue;
 
           if (isSimplePoints) {
@@ -210,29 +212,46 @@ function RCIntersection(BVH) {
             for (const p of refVal) {
               for (const poly of dataPolylines) {
                 for (let k = 1; k < poly.length; k++) {
-                  const a = poly[k-1], b = poly[k];
+                  const a = poly[k - 1], b = poly[k];
                   if (pointSegmentDistance(p, a, b) <= eps) {
-                    const collisionKey = `point -> P[${p[0]}, ${p[1]}] - C[${i}, ${j}]`;
-                    ensure(refKey, dataKey).add(collisionKey);
-                    break; // Evitar múltiples detecciones del mismo punto
+                    const key = `p:${p[0]},${p[1]}@c:${i},${j}`;
+                    const byData = ensure(refKey, dataKey);
+                    if (!byData.has(key)) {
+                      byData.set(key, {
+                        type: "point",
+                        cell: [i, j],
+                        point: [p[0], p[1]],
+                      });
+                    }
+                    break; // evitar múltiples detecciones del mismo punto
                   }
                 }
               }
             }
           } else {
-            // CASO 2: POLILÍNEAS 
+            // CASO 2: POLILÍNEAS
             for (const rpoly of refVal) {
               if (!Array.isArray(rpoly) || rpoly.length < 2) continue;
-              
+
               for (let r = 1; r < rpoly.length; r++) {
-                const c0 = rpoly[r-1], d0 = rpoly[r];
+                const c0 = rpoly[r - 1], d0 = rpoly[r];
                 for (const dpoly of dataPolylines) {
                   for (let s = 1; s < dpoly.length; s++) {
-                    const a0 = dpoly[s-1], b0 = dpoly[s];
+                    const a0 = dpoly[s - 1], b0 = dpoly[s];
                     const hit = segmentIntersect(a0, b0, c0, d0);
                     if (hit.hit) {
-                      const collisionKey = `segment -> p[${hit.point[0].toFixed(3)}, ${hit.point[1].toFixed(3)}] - C[${i}, ${j}]`;
-                      ensure(refKey, dataKey).add(collisionKey);
+                      // clave única por celda+punto para deduplicar
+                      const px = +hit.point[0].toFixed(6);
+                      const py = +hit.point[1].toFixed(6);
+                      const key = `s:${px},${py}@c:${i},${j}`;
+                      const byData = ensure(refKey, dataKey);
+                      if (!byData.has(key)) {
+                        byData.set(key, {
+                          type: "segment",
+                          cell: [i, j],
+                          point: [px, py],
+                        });
+                      }
                     }
                   }
                 }
@@ -244,18 +263,48 @@ function RCIntersection(BVH) {
     }
   }
 
-  return collisions;
+  // Normaliza a formato JSON‑friendly
+  const result = [];
+  for (const [refId, byData] of collisions) {
+    const entry = {
+      refId,
+      isSimplePoints: !!refMeta.get(refId) && refMeta.get(refId).isSimplePoints,
+      collisions: [],
+    };
+    for (const [dataId, hitsMap] of byData) {
+      entry.collisions.push({
+        dataId,
+        count: hitsMap.size,
+        hits: Array.from(hitsMap.values()),
+      });
+    }
+    result.push(entry);
+  }
+
+ 
+    // Asigna las colisiones encontradas a cada curva de referencia (por id)
+    result.forEach(refResult => {
+      const ref = BVH.referenceLines.find(r => r.id === refResult.refId);
+      if (ref && refResult.collisions.length > 0) {
+      ref.collisions = refResult.collisions;
+      }
+    });
+  return result;
 }
 
 
-function populateBVHReferenceLines(referenceLines, BVH) {
+function populateBVHReferenceLines(newReferenceLines, BVH) {
 
   const inBounds = (x, y) => {
     const result = x >= 0 && x < BVH.width && y >= 0 && y < BVH.height;
     return result;
   };
-
-  referenceLines.forEach((ref) => {
+  // Añadir nuevas curvas de referencia a las existentes en BVH
+  if (!BVH.referenceLines) {
+    BVH.referenceLines = [];
+  }
+  BVH.referenceLines = BVH.referenceLines.concat(newReferenceLines);
+  newReferenceLines.forEach((ref) => {
     const id = ref.id;
     const collisionActive = ref.collisionActive;
     const isSimplePoints = ref.isSimplePoints;
@@ -353,7 +402,6 @@ function populateBVHReferenceLines(referenceLines, BVH) {
       offsetX: extentX[0],
       offsetY: extentY[0],
       keys: keys,
-      collisions: new Map(), 
       BVH: [],
     };
 
@@ -382,7 +430,7 @@ function populateBVHReferenceLines(referenceLines, BVH) {
       populateBVHPoints(data, BVH, false);
 
     if (referenceLines != null) {
-      BVH.collisions = populateBVHReferenceLines(referenceLines, BVH);
+      populateBVHReferenceLines(referenceLines, BVH);
     }
     return BVH;
   }
@@ -572,11 +620,11 @@ function populateBVHReferenceLines(referenceLines, BVH) {
   };
 
   me.addReferenceCurves = function(curves) {
-    BVH.collisions = populateBVHReferenceLines(curves, BVH);
+    populateBVHReferenceLines(curves, BVH);
   };
 
-  me.getCollisions = function() {
-    return BVH.collisions;
+  me.getBvh = function() {
+    return BVH;
   }
 
   return me;

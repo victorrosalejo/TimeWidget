@@ -8,8 +8,8 @@
     <script type="module">
         // Parámetros configurables para rango de x e y
         const testData = [];
-        const numLines = 5;
-        const pointsPerLine = 5;
+        const numLines = 4; // Más líneas
+        const pointsPerLine = 6;
         const xStart = 0;
         const xEnd = 8;
         const yMin = 0;
@@ -19,21 +19,27 @@
         const targetX = 4.3;
         const targetY = 40.2;
 
-        // Definimos una curva por puntos que pasa por (targetX, targetY)
-        const points = [
-            { x: 0, y: 10 },
-            { x: 2, y: 30 },
-            { x: targetX, y: targetY }, // El punto requerido
-            { x: 6, y: 60 },
-            { x: 8, y: 40 }
-        ];
-
-        for (let i = 0; i < points.length; i++) {
+        // Genera varias líneas en el dominio [xStart, xEnd]
+        for (let l = 0; l < numLines; l++) {
+            const linePoints = [];
+            for (let p = 0; p < pointsPerLine; p++) {
+            const x = xStart + ((xEnd - xStart) * p) / (pointsPerLine - 1);
+            // Distribuye las líneas en el rango vertical
+            let y = yMin + ((yMax - yMin) * l) / (numLines - 1);
+            // Para la línea central, pasa por el punto objetivo
+            if (l === Math.floor(numLines / 2) && p === Math.floor(pointsPerLine / 2)) {
+                linePoints.push({ x: targetX, y: targetY });
+            } else {
+                linePoints.push({ x, y: y + Math.sin(x + l) * 10 });
+            }
+            }
+            for (const pt of linePoints) {
             testData.push({
-                id: 'unique_curve',
-                x: points[i].x,
-                y: points[i].y
+                id: `curve_${l}`,
+                x: pt.x,
+                y: pt.y
             });
+            }
         }
 
         //  const testData = [];
@@ -93,7 +99,6 @@ const curves = [
         {
             id: 'points_only',
             data: [[4.3, 40.2],[2,30]],
-            color: '#ff0000',
             pointRadius: 6,
             isSimplePoints: true,  
             collisionActive: true       
@@ -106,7 +111,7 @@ const curves = [
             width: 800,
             height: 400,
             showGrid: true,
-            //referenceCurves: curves,
+            referenceCurves: curves,
         });
 
         // Curvas interesantes en el dominio x ∈ [0, 10]

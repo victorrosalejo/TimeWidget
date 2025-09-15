@@ -693,6 +693,8 @@ function TimeWidget(
       referenceCurves: referenceCurves,
     });
 
+    
+
     gGroupBrushes
       .selectAll("text")
       .data([1])
@@ -1432,7 +1434,7 @@ function generateCurvePoints(curves, domainX, domainY) {
       return points;
     },
   };
-
+  
   const processedCurves = curves
     .map((curve) => {
       // Usa curve.numPoints si existe y es válido, si no usa 10000 por defecto
@@ -1441,6 +1443,9 @@ function generateCurvePoints(curves, domainX, domainY) {
       const processedCurve = Object.assign({}, curve);
       processedCurve.collisionActive = typeof curve.collisionActive !== "undefined" ? curve.collisionActive : false;
       processedCurve.isSimplePoints = typeof curve.isSimplePoints !== "undefined" ? curve.isSimplePoints : true;
+      if (typeof curve.collisions === "undefined") {
+        processedCurve.collisions = null;
+      }
 
       // Prioriza data existente (puntos simples o polilíneas) sobre generación de funciones
       if (curve.data && Array.isArray(curve.data) && curve.data.length > 0) {

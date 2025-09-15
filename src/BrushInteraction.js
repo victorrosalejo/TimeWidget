@@ -94,7 +94,7 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     margin: { top: ts.margin.top, left: ts.margin.left },
     callback: onTooltipChange,
   });
-
+  
   brushContextMenu = BrushContextMenu({
     target: contextMenuTarget,
     callback: onContextMenuChange,
@@ -1074,7 +1074,8 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
   };
 
   me.getBvhCollisions = function () {
-    return BVH_.getCollisions();
+    console.log(BVH_.getBvh());
+    return BVH_.getBvh();
   }
 
   me.drawBrushes = function () {
