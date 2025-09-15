@@ -15,49 +15,85 @@ function BVH({
   xPartitions = 10,
   yPartitions = 10,
   polylines = true,
+  referenceLines = null,
 }) {
   let me = {};
   let BVH = makeBVH();
+  console.log("BVH Created", BVH);
+  
+ function pupulateBVHPolylines(data, BVH, Rcurve) {
+  let xinc = BVH.xinc;
+  let yinc = BVH.yinc;
+  data.forEach((d) => {
+    let key = d[0];
+    let collisionActive = d[2]; // ← Extraer parámetros
+    let isSimplePoints = d[3];  // ← Extraer parámetros
+    
+    let lastXindex = -1;
+    let lastYindex = -1;
+    for (let i = 0; i < d[1].length; ++i) {
+      let current = d[1][i];
+      let xCoor = current[0];
+      let yCoor = current[1];
+      if (xCoor != null && yCoor != null) {
+        let xIndex = Math.floor(xCoor / xinc);
+        let yIndex = Math.floor(yCoor / yinc);
+        if (isNaN(xIndex) || isNaN(yIndex)) {
+          log("ERROR: xIndex or YIndex is NaN: XCoor: " + xCoor +"; yCoor: " + yCoor );
+        }
 
-  function pupulateBVHPolylines(data, BVH) {
-    let xinc = BVH.xinc;
-    let yinc = BVH.yinc;
-    data.forEach((d) => {
-      let key = d[0];
-      let lastXindex = -1;
-      let lastYindex = -1;
-      for (let i = 0; i < d[1].length; ++i) {
-        let current = d[1][i];
-        let xCoor = current[0];
-        let yCoor = current[1];
-        if (xCoor != null && yCoor != null) {
-          let xIndex = Math.floor(xCoor / xinc);
-          let yIndex = Math.floor(yCoor / yinc);
-          if (isNaN(xIndex) || isNaN(yIndex)) {
-            log("ERROR: xIndex or YIndex is NaN: XCoor: " + xCoor +"; yCoor: " + yCoor );
-          }
-
-          if (i === 0) {
-            BVH.BVH[xIndex][yIndex].data.set(key, [[current]]);
+        if (i === 0) {
+          if (Rcurve) {
+            // Almacenar como objeto con propiedades
+            BVH.BVH[xIndex][yIndex].referenceLines.set(key, {
+              data: [[current]],
+              collisionActive: collisionActive,
+              isSimplePoints: isSimplePoints
+            });
           } else {
-            if (xIndex === lastXindex && yIndex === lastYindex) {
-              BVH.BVH[xIndex][yIndex].data.get(key).at(-1).push(current);
+            BVH.BVH[xIndex][yIndex].data.set(key, [[current]]);
+          }
+        } else {
+          if (xIndex === lastXindex && yIndex === lastYindex) {
+            if (Rcurve) {
+              BVH.BVH[xIndex][yIndex].referenceLines.get(key).data.push(current);
             } else {
-              let previousCell = BVH.BVH[lastXindex][lastYindex];
+              BVH.BVH[xIndex][yIndex].data.get(key).at(-1).push(current);
+            }
+          } else {
+            let previousCell = BVH.BVH[lastXindex][lastYindex];
+            if (Rcurve) {
+              previousCell.referenceLines.get(key).data.push(current);
+            } else {
               previousCell.data.get(key).at(-1).push(current);
-              let previous = d[1][i - 1];
-              for (let row of BVH.BVH) {
-                for (let cell of row) {
-                  if (cell !== previousCell) {
-                    if (
-                      lineIntersection(
-                        [previous, current],
-                        cell.x0,
-                        cell.y0,
-                        cell.x1,
-                        cell.y1
-                      )
-                    ) {
+            }
+            let previous = d[1][i - 1];
+            for (let row of BVH.BVH) {
+              for (let cell of row) {
+                if (cell !== previousCell) {
+                  if (
+                    lineIntersection(
+                      [previous, current],
+                      cell.x0,
+                      cell.y0,
+                      cell.x1,
+                      cell.y1
+                    )
+                  ) {
+                    if (Rcurve) {
+                      if (cell.referenceLines.has(key)) {
+                        cell.referenceLines.get(key).data.push([previous]);
+                        cell.referenceLines.get(key).data.at(-1).push(current);
+                      } else {
+                        // Crear nuevo objeto con propiedades
+                        cell.referenceLines.set(key, {
+                          data: [[previous]],
+                          collisionActive: collisionActive,
+                          isSimplePoints: isSimplePoints
+                        });
+                        cell.referenceLines.get(key).data.at(-1).push(current);
+                      }
+                    } else {
                       if (cell.data.has(key)) {
                         cell.data.get(key).push([previous]);
                         cell.data.get(key).at(-1).push(current);
@@ -71,28 +107,222 @@ function BVH({
               }
             }
           }
-          lastXindex = xIndex;
-          lastYindex = yIndex;
         }
+
+        lastXindex = xIndex;
+        lastYindex = yIndex;
       }
-    });
+    }
+  });
+}
+// Devuelve {hit, t, u, point} donde t y u en [0,1] indican el punto de corte.
+// hit=false si no hay intersección (segmentos paralelos o fuera de rango)
+function segmentIntersect(a, b, c, d) {
+  // r = vector AB (del primer segmento)
+  const r = [b[0] - a[0], b[1] - a[1]];
+
+  // s = vector CD (del segundo segmento)
+  const s = [d[0] - c[0], d[1] - c[1]];
+
+  // Producto cruzado r × s (determinante 2D). Si 0 → paralelos o colineales.
+  const rxs = r[0]*s[1] - r[1]*s[0];
+
+  // (QP × R) con Q = C, P = A (vector CA cruz R). Útil para parámetro u luego.
+  const qpxr = (c[0]-a[0])*r[1] - (c[1]-a[1])*r[0];
+
+  // Si rxs = 0, segmentos paralelos (o colineales). Aquí lo tratamos como "sin corte".
+  if (rxs === 0) {
+    return { hit: false };
   }
 
-  function populateBVHPoints(data, BVH) {
+  // Parámetro t en AB donde caería la intersección con la recta CD.
+  // Fórmula: t = ( (C-A) × s ) / (r × s )
+  const t = ((c[0]-a[0])*s[1] - (c[1]-a[1])*s[0]) / rxs;
+
+  // Parámetro u en CD donde caería la intersección con la recta AB.
+  // Fórmula: u = ( (C-A) × r ) / (r × s )
+  const u = qpxr / rxs;
+
+  // Si t∈[0,1] y u∈[0,1], el punto de corte está dentro de ambos segmentos
+  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+    // Punto de corte: A + t*R
+    return { hit: true, t, u, point: [a[0] + t*r[0], a[1] + t*r[1]] };
+  }
+
+  // Si no, las rectas se cruzan fuera de los tramos de segmento
+  return { hit: false };
+}
+// Distancia mínima entre punto p y el segmento ab
+function pointSegmentDistance(p, a, b) {
+  // Vectores AP y AB 
+  const ap = [p[0]-a[0], p[1]-a[1]];
+  const ab = [b[0]-a[0], b[1]-a[1]];
+
+  // Longitud al cuadrado de AB (para evitar sqrt temprano)
+  const ab2 = ab[0]*ab[0] + ab[1]*ab[1];
+
+  // Si a==b (segmento degenerado), distancia euclídea de p a a
+  if (ab2 === 0) return Math.hypot(ap[0], ap[1]);
+
+  // Proyección escalar “t” de AP sobre AB normalizado, acotada a [0,1]
+  const t = Math.max(0, Math.min(1, (ap[0]*ab[0] + ap[1]*ab[1]) / ab2));
+
+  // Punto más cercano sobre el segmento: a + t*AB
+  const closest = [a[0] + t*ab[0], a[1] + t*ab[1]];
+
+  // Distancia euclídea de P a ese punto más cercano
+  return Math.hypot(p[0]-closest[0], p[1]-closest[1]);
+}
+
+
+function RCIntersection(BVH) {
+  const eps = 0; //Un 100% de precisión en los puntos
+  const collisions = new Map();
+
+  const ensure = (refKey, dataKey) => {
+    if (!collisions.has(refKey)) collisions.set(refKey, new Map());
+    const inner = collisions.get(refKey);
+    if (!inner.has(dataKey)) inner.set(dataKey, new Set()); 
+    return inner.get(dataKey);
+  };
+
+  for (let i = 0; i < BVH.BVH.length; i++) {
+    for (let j = 0; j < BVH.BVH[i].length; j++) {
+      const cell = BVH.BVH[i][j];
+
+      if (cell.referenceLines.size === 0 || cell.data.size === 0) continue;
+
+      for (const [dataKey, dataPolylines] of cell.data) {
+        for (const [refKey, refObj] of cell.referenceLines) {
+          const refVal = refObj.data || refObj; // Compatibilidad hacia atrás
+          const collisionActive = refObj.collisionActive;
+          const isSimplePoints = refObj.isSimplePoints;
+          
+          if (collisionActive !== true) {
+            continue;
+          }
+
+          
+          if (!refVal || refVal.length === 0) continue;
+
+          if (isSimplePoints) {
+            // CASO 1: PUNTOS DE REFERENCIA
+            for (const p of refVal) {
+              for (const poly of dataPolylines) {
+                for (let k = 1; k < poly.length; k++) {
+                  const a = poly[k-1], b = poly[k];
+                  if (pointSegmentDistance(p, a, b) <= eps) {
+                    const collisionKey = `point -> P[${p[0]}, ${p[1]}] - C[${i}, ${j}]`;
+                    ensure(refKey, dataKey).add(collisionKey);
+                    break; // Evitar múltiples detecciones del mismo punto
+                  }
+                }
+              }
+            }
+          } else {
+            // CASO 2: POLILÍNEAS 
+            for (const rpoly of refVal) {
+              if (!Array.isArray(rpoly) || rpoly.length < 2) continue;
+              
+              for (let r = 1; r < rpoly.length; r++) {
+                const c0 = rpoly[r-1], d0 = rpoly[r];
+                for (const dpoly of dataPolylines) {
+                  for (let s = 1; s < dpoly.length; s++) {
+                    const a0 = dpoly[s-1], b0 = dpoly[s];
+                    const hit = segmentIntersect(a0, b0, c0, d0);
+                    if (hit.hit) {
+                      const collisionKey = `segment -> p[${hit.point[0].toFixed(3)}, ${hit.point[1].toFixed(3)}] - C[${i}, ${j}]`;
+                      ensure(refKey, dataKey).add(collisionKey);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return collisions;
+}
+
+
+function populateBVHReferenceLines(referenceLines, BVH) {
+
+  const inBounds = (x, y) => {
+    const result = x >= 0 && x < BVH.width && y >= 0 && y < BVH.height;
+    return result;
+  };
+
+  referenceLines.forEach((ref) => {
+    const id = ref.id;
+    const collisionActive = ref.collisionActive;
+    const isSimplePoints = ref.isSimplePoints;
+    // 1) Aplica offset y filtra valores no finitos
+    const adjustedPoints = (ref.data || [])
+      .map(([x, y]) => {
+        const adjusted = [x - BVH.offsetX, y - BVH.offsetY];
+        return adjusted;
+      })
+      .filter(([x, y]) => {
+        const isFinite = Number.isFinite(x) && Number.isFinite(y);
+        return isFinite;
+      })
+      .filter(([x, y]) => {
+        const bounds = inBounds(x, y);
+        return bounds;
+      });
+
+    // 2) Si no queda nada, saltamos
+    if (adjustedPoints.length === 0) {
+      return;
+    }
+    // 3) Decide a qué función llamar
+    if (ref.isSimplePoints || adjustedPoints.length === 1) {
+      // puntos sueltos
+      populateBVHPoints([[id, adjustedPoints, collisionActive, isSimplePoints]], BVH, true);
+    } else {
+      // polilínea (mínimo 2 puntos)
+      if (adjustedPoints.length >= 2) {
+        pupulateBVHPolylines([[id, adjustedPoints, collisionActive, isSimplePoints]], BVH, true);
+      }
+    }
+  });
+  return RCIntersection(BVH);
+}
+
+
+
+  function populateBVHPoints(data, BVH, Rcurve) {
+    
     let xinc = BVH.xinc;
     let yinc = BVH.yinc;
     data.forEach(d => {
       let key = d[0];
+      let collisionActive = d[2]; 
+      let isSimplePoints = d[3];  
+    
       for (let point of d[1]) {
         let [x, y] = point;
         let Iindex = Math.floor(x / xinc);
         let Jindex = Math.floor(y / yinc);
         let cell = BVH.BVH[Iindex][Jindex];
 
-        if (cell.data.has(key)) {
-          cell.data.get(key).push([x,y]);
+        if (Rcurve) {
+          if (!cell.referenceLines.has(key)) {
+            cell.referenceLines.set(key, {
+              data: [],
+              collisionActive: collisionActive,
+              isSimplePoints: isSimplePoints,
+            });
+          }
+          cell.referenceLines.get(key).data.push([x, y]);
         } else {
-          cell.data.set(key,[x,y]);
+          if (!cell.data.has(key)) {
+            cell.data.set(key, []);
+          }
+          cell.data.get(key).push([x, y]);
         }
       }
     });
@@ -101,6 +331,14 @@ function BVH({
   function makeBVH() {
     let keys = data.map((d) => d[0]);
     let allValues = data.map(d => d[1]).flat();
+     if (referenceLines && referenceLines.length > 0) {
+    referenceLines.forEach(ref => {
+      if (ref.data && Array.isArray(ref.data)) {
+        allValues = allValues.concat(ref.data);
+      }
+    });
+  }
+  
     let extentX = d3.extent(allValues, d => d[0]);
     let extentY = d3.extent(allValues, d => d[1]);
     let width = (extentX[1] - extentX[0]) + 1;
@@ -115,6 +353,7 @@ function BVH({
       offsetX: extentX[0],
       offsetY: extentY[0],
       keys: keys,
+      collisions: new Map(), 
       BVH: [],
     };
 
@@ -129,19 +368,22 @@ function BVH({
           y0: currentY,
           y1: currentY + yinc,
           data: new Map(),
+          referenceLines: new Map(), //Map to store reference lines
         };
       }
     }
-
     // Move the data to start at coordinates [0,0]
     data = data.map(([k, v]) => [k, v.map(([x, y]) => [x - BVH.offsetX, y - BVH.offsetY])]);
 
 
     if (polylines)
-      pupulateBVHPolylines(data, BVH);
+      pupulateBVHPolylines(data, BVH, false);
     else
-      populateBVHPoints(data, BVH);
+      populateBVHPoints(data, BVH, false);
 
+    if (referenceLines != null) {
+      BVH.collisions = populateBVHReferenceLines(referenceLines, BVH);
+    }
     return BVH;
   }
 
@@ -319,7 +561,6 @@ function BVH({
 
     return intersections;
   }
-
   me.contains = function(x0, y0, x1, y1) {
     return testsEntitiesAll(x0, y0, x1, y1, containIntersection);
   };
@@ -329,6 +570,14 @@ function BVH({
     return testsEntitiesAny(x0, y0, x1, y1, lineIntersection);
 
   };
+
+  me.addReferenceCurves = function(curves) {
+    BVH.collisions = populateBVHReferenceLines(curves, BVH);
+  };
+
+  me.getCollisions = function() {
+    return BVH.collisions;
+  }
 
   return me;
 }

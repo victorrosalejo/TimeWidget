@@ -95,7 +95,7 @@ function TimeWidget(
   detailsMargin = detailsMargin || margin;
 
   let ts = {},
-    groupedData,
+    groupedData,  
     fData,
     overviewX,
     overviewY,
@@ -122,7 +122,8 @@ function TimeWidget(
     nGroupsData,
     timelineDetails, // Centralizes the details component
     timelineOverview, // Centralizes the overview component
-    brushes;
+    brushes; // Stores the reference lines
+    
 
   // Exported Parameters
   ts.xPartitions = xPartitions;
@@ -157,7 +158,6 @@ function TimeWidget(
   ts.xScale = xScale;
   ts.highlightAlpha = highlightAlpha;
   ts.selectedColorTransform = selectedColorTransform;
-
   //Backwards compatibility with groupAttr.
   if (groupAttr) {
     console.warn('The attribute "groupAttr" is deprecated use "color" instead');
@@ -662,6 +662,12 @@ function TimeWidget(
       .join("g")
       .attr("id", "brushes");
 
+    //Before create the brushes structure, we generete the reerence lines points.
+    //THIS IS ONLY TO GENERATE POINTS FOR THE FUNCTIONS 
+    if (referenceCurves) {
+      referenceCurves = generateCurvePoints(referenceCurves, overviewX.domain(), overviewY.domain());
+    }
+
     brushes = brushInteraction({
       ts,
       element: gBrushes.node(),
@@ -684,6 +690,7 @@ function TimeWidget(
       selectionCallback: onSelectionChange,
       groupsCallback: onBrushGroupsChange,
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
+      referenceCurves: referenceCurves,
     });
 
     gGroupBrushes
@@ -1320,42 +1327,254 @@ function TimeWidget(
       return outMap;
     } */
 
-  ts.addReferenceCurves = function (curves) {
-    if (!overviewX) return;
-    if (!Array.isArray(curves)) {
-      throw new Error("The reference curves must be an array of Objects");
-    }
-    let domainX = overviewX.domain();
-    let domainY = overviewY.domain();
+  //REFERENCE CURVES LOGIC 
+function printCollisions(){
+//TODO: PINTAR PUNTOS DE INTERESECCIÓN 
+}
 
-    curves.forEach((c) => {
-      c.data.sort((a, b) => d3.ascending(x(a), x(b)));
-      c.data = c.data.filter(
-        (p) =>
-          p[0] >= domainX[0] &&
-          p[0] <= domainX[1] &&
-          p[1] >= domainY[0] &&
-          p[1] <= domainY[1]
+
+
+ts.addReferenceCurveBUILDING = function(curves) {
+  curves = generateCurvePoints(curves, overviewX.domain(), overviewY.domain());
+  brushes.updateReferenceCurves(curves);
+  
+  // Merge referenceCurves with curves so that referenceCurves contains all curves
+  referenceCurves = Array.isArray(referenceCurves) ? referenceCurves : [];
+  curves = Array.isArray(curves) ? curves : [];
+  referenceCurves = referenceCurves.concat(curves);
+
+  this.printReferenceCurves(referenceCurves);
+
+}
+
+function generateCurvePoints(curves, domainX, domainY) {
+  if (!Array.isArray(curves)) {
+    throw new Error("The reference curves must be an array of Objects");
+  }
+
+  let unnamedCount = 1; // Index for unnamed curves
+  curves.forEach((curve) => {
+    if (!curve.id) {
+      curve.id = `Reference Curve ${unnamedCount++}`;
+    }
+  });
+
+  if (curves.length === 0) return []; // Nothing to process
+
+  const isValidNumber = (n) => isFinite(n) && !isNaN(n);
+
+    const processors = {
+    function: (curve, numPoints) => {
+      const xMin =
+        curve.domain && curve.domain[0] !== undefined ? curve.domain[0] : domainX[0];
+      const xMax =
+        curve.domain && curve.domain[1] !== undefined
+          ? curve.domain[1]
+          : domainX[1];
+      const step = (xMax - xMin) / numPoints;
+
+      const points = [];
+      for (let x = xMin; x <= xMax; x += step) {
+        try {
+          const y = curve.func(x);
+          if (isValidNumber(y)) {
+            points.push([x, y]);
+          }
+        } catch (e) {}
+      }
+      return points;
+    },
+
+    parametric: (curve, numPoints) => {
+      const tMin =
+        curve.tRange && curve.tRange[0] !== undefined ? curve.tRange[0] : 0;
+      const tMax =
+        curve.tRange && curve.tRange[1] !== undefined
+          ? curve.tRange[1]
+          : 2 * Math.PI;
+      const step = (tMax - tMin) / numPoints;
+
+      const points = [];
+      for (let t = tMin; t <= tMax; t += step) {
+        try {
+          const x = curve.xFunc(t);
+          const y = curve.yFunc(t);
+          if (isValidNumber(x) && isValidNumber(y)) {
+            points.push([x, y]);
+          }
+        } catch (e) {}
+      }
+      return points;
+    },
+
+    polynomial: (curve, numPoints) => {
+      const xMin =
+        curve.domain && curve.domain[0] !== undefined
+          ? curve.domain[0]
+          : domainX[0];
+      const xMax =
+        curve.domain && curve.domain[1] !== undefined
+          ? curve.domain[1]
+          : domainX[1];
+      const step = (xMax - xMin) / numPoints;
+      const coefficients = curve.coefficients;
+
+      const points = [];
+      for (let x = xMin; x <= xMax; x += step) {
+        let y = 0;
+        for (let i = coefficients.length - 1; i >= 0; i--) {
+          y = y * x + coefficients[i];
+        }
+        if (isValidNumber(y)) {
+          points.push([x, y]);
+        }
+      }
+      return points;
+    },
+  };
+
+  const processedCurves = curves
+    .map((curve) => {
+      // Usa curve.numPoints si existe y es válido, si no usa 10000 por defecto
+      let numPoints = (curve.numPoints && isFinite(curve.numPoints)) ? curve.numPoints : 10000;
+      curve.isVisible = true; // Add isVisible property to each curve
+      const processedCurve = Object.assign({}, curve);
+      processedCurve.collisionActive = typeof curve.collisionActive !== "undefined" ? curve.collisionActive : false;
+      processedCurve.isSimplePoints = typeof curve.isSimplePoints !== "undefined" ? curve.isSimplePoints : true;
+
+      // Prioriza data existente (puntos simples o polilíneas) sobre generación de funciones
+      if (curve.data && Array.isArray(curve.data) && curve.data.length > 0) {
+        // Usa data existente sin generar nuevos puntosç
+        processedCurve.data = curve.data;
+      } else if (curve.func && typeof curve.func === "function") {
+        processedCurve.data = processors.function(curve, numPoints);
+      } else if (
+        curve.xFunc &&
+        curve.yFunc &&
+        typeof curve.xFunc === "function" &&
+        typeof curve.yFunc === "function"
+      ) {
+        processedCurve.data = processors.parametric(curve, numPoints);
+      } else if (curve.coefficients && Array.isArray(curve.coefficients)) {
+        processedCurve.data = processors.polynomial(curve, numPoints);
+      } else {
+        console.warn(
+          "Curve without data or valid functions. Skipping.",
+          curve
+        );
+        return null;
+      }
+
+      return processedCurve;
+    })
+    .filter(Boolean);
+
+  // Filtrar puntos por dominio (aplica a todos, ya sean generados o existentes)
+  processedCurves.forEach((curve) => {
+    if (
+      !curve.data ||
+      !Array.isArray(curve.data) ||
+      curve.data.length === 0
+    ) {
+      curve.data = [];
+      return;
+    }
+    curve.data = curve.data.filter((point) => {
+      const [xVal, yVal] = point;
+      return (
+        xVal >= domainX[0] &&
+        xVal <= domainX[1] &&
+        yVal >= domainY[0] &&
+        yVal <= domainY[1] &&
+        isValidNumber(xVal) &&
+        isValidNumber(yVal)
       );
     });
 
-    let line2 = d3
-      .line()
-      .defined((d) => d[1] !== undefined && d[1] !== null)
-      .x((d) => overviewX(d[0]))
-      .y((d) => overviewY(d[1]));
+    curve.data.sort((a, b) => a[0] - b[0]);
+  });
 
-    gReferences
-      .selectAll(".referenceCurve")
-      .data(curves)
-      .join("path")
-      .attr("class", "referenceCurve")
-      .attr("d", (c) => line2(c.data))
-      .attr("stroke-width", 2)
-      .style("fill", "none")
-      .style("stroke", (c) => c.color)
-      .style("opacity", (c) => c.opacity);
+  return processedCurves; // Devuelve las curvas con puntos procesados
+}
+//TODO: Entender y modular esta funcion para el pintado de las curvas
+  ts.printReferenceCurves = function (curves) {
+    if (!overviewX) return;
+  if (!Array.isArray(curves)) {
+    throw new Error("The reference curves must be an array of Objects");
+  }
+  let domainX = overviewX.domain();
+  let domainY = overviewY.domain();
+
+  curves.forEach((c) => {
+    c.data.sort((a, b) => d3.ascending(x(a), x(b)));
+    c.data = c.data.filter(
+      (p) =>
+        p[0] >= domainX[0] &&
+        p[0] <= domainX[1] &&
+        p[1] >= domainY[0] &&
+        p[1] <= domainY[1]
+    );
+  });
+
+  // Separar curvas en líneas y puntos
+  const lineCurves = curves.filter(curve => !curve.isSimplePoints);
+  const pointCurves = curves.filter(curve => curve.isSimplePoints);
+
+  // RENDERIZAR LÍNEAS para curvas con isSimplePoints = false
+  let line2 = d3
+    .line()
+    .defined((d) => d[1] !== undefined && d[1] !== null)
+    .x((d) => overviewX(d[0]))
+    .y((d) => overviewY(d[1]));
+
+  gReferences
+    .selectAll(".referenceCurve")
+    .data(lineCurves)
+    .join("path")
+    .attr("class", "referenceCurve")
+    .attr("d", (c) => line2(c.data))
+    .attr("stroke-width", (c) => c.strokeWidth || 2)
+    .style("fill", "none")
+    .style("stroke", (c) => c.color)
+    .style("opacity", (c) => c.opacity || 1);
+
+  // RENDERIZAR PUNTOS para curvas con isSimplePoints = true
+  // Primero, crear un array plano de todos los puntos con su información de curva
+  const allPoints = [];
+  pointCurves.forEach(curve => {
+    curve.data.forEach(point => {
+      allPoints.push({
+        x: point[0],
+        y: point[1],
+        curveId: curve.id,
+        color: curve.color,
+        radius: curve.pointRadius || 4,
+        opacity: curve.opacity || 1,
+        strokeColor: curve.strokeColor || '#ffffff',
+        strokeWidth: curve.strokeWidth || 1
+      });
+    });
+  });
+
+  // Renderizar los círculos
+  gReferences
+    .selectAll(".referencePoint")
+    .data(allPoints)
+    .join("circle")
+    .attr("class", "referencePoint")
+    .attr("cx", (d) => overviewX(d.x))
+    .attr("cy", (d) => overviewY(d.y))
+    .attr("r", (d) => d.radius)
+    .style("fill", (d) => d.color)
+    .style("opacity", (d) => d.opacity)
+    .style("stroke", (d) => d.strokeColor)
+    .style("stroke-width", (d) => d.strokeWidth)
+    .append("title") // Tooltip opcional
+    .text((d) => `${d.curveId}: (${d.x}, ${d.y})`);
+
   };
+
+
 
   ts.updateCallback = function (_) {
     return arguments.length ? ((updateCallback = _), ts) : updateCallback;
@@ -1437,7 +1656,7 @@ function TimeWidget(
   }
 
   if (referenceCurves) {
-    ts.addReferenceCurves(referenceCurves);
+    ts.printReferenceCurves(referenceCurves);
   }
 
   // To allow a message from the outside to rerender

@@ -30,6 +30,7 @@ function brushInteraction({
   changeSelectedCoordinatesCallback = () => {}, // (selection) => {} Called when the coordinates of the selected brush change.
   selectedBrushCallback = () => {}, // (brush) => {} Called when the selected Brush changes.
   statusCallback = () => {}, // (status) => {}
+  referenceCurves
 }) {
   let me = {},
     brushSize,
@@ -69,11 +70,22 @@ function brushInteraction({
     return [d[0], polyline];
   });
 
+let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
+  // Solo escalado directo
+  let scaledData = ref.data.map((pt) => {
+    return [scaleX(pt[0]), scaleY(pt[1])];
+  });
+
+  return Object.assign({}, ref, { data: scaledData });
+}) : null;
+
   BVH_ = BVH({
     data: BVHData,
     xPartitions,
     yPartitions,
+    referenceLines: BVHReferenceLines, // Added reference lines to the BVH for intersection calculations
   });
+
 
   brushTooltip = brushTooltipEditable({
     fmtX,
@@ -1047,6 +1059,23 @@ function brushInteraction({
     brushFilter();
     drawBrushes();
   };
+
+  me.updateReferenceCurves = function (newReferenceCurves) {
+    let BVHReferenceLines = newReferenceCurves
+      ? newReferenceCurves.map((ref) => {
+          // Solo escalado directo
+          let scaledData = ref.data.map((pt) => {
+            return [scaleX(pt[0]), scaleY(pt[1])];
+          });
+          return Object.assign({}, ref, { data: scaledData });
+        })
+      : null;
+    BVH_.addReferenceCurves(BVHReferenceLines);
+  };
+
+  me.getBvhCollisions = function () {
+    return BVH_.getCollisions();
+  }
 
   me.drawBrushes = function () {
     drawBrushes();

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Curvas Alta Resolución - Optimizado</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="../../dist/TimeWidget.js"></script>
+
+    <script type="module">
+        // Parámetros configurables para rango de x e y
+        const testData = [];
+        const numLines = 5;
+        const pointsPerLine = 5;
+        const xStart = 0;
+        const xEnd = 8;
+        const yMin = 0;
+        const yMax = 100;
+
+        // El punto por el que debe pasar la curva
+        const targetX = 4.3;
+        const targetY = 40.2;
+
+        // Definimos una curva por puntos que pasa por (targetX, targetY)
+        const points = [
+            { x: 0, y: 10 },
+            { x: 2, y: 30 },
+            { x: targetX, y: targetY }, // El punto requerido
+            { x: 6, y: 60 },
+            { x: 8, y: 40 }
+        ];
+
+        for (let i = 0; i < points.length; i++) {
+            testData.push({
+                id: 'unique_curve',
+                x: points[i].x,
+                y: points[i].y
+            });
+        }
+
+        //  const testData = [];
+        // for (let x = 0; x <= 1; x += 1) {
+        //     testData.push({
+        //     id: `point_${x}`,
+        //     x: x,
+        //     y: Math.sin(x * 0.1) * 30 + 120
+        //     });
+        // }
+const curves = [
+            // {
+            // id: 'sin_curve',
+            // func: (x) => 10 * Math.sin(x) + 50,
+            // color: '#ff6b6b',
+            // collisionActive: true,
+            // domain: [0, 10],
+            // numPoints:10000
+            // },
+            // {
+            // id: 'cos_curve',
+            // func: (x) => x**2 +20,
+            // color: '#6b6bff',
+            // collisionActive: true,
+            // domain: [0, 10]
+            // },
+            // {
+            // id: 'parabola_curve',
+            // func: (x) => 0.5 * (x - 5) ** 2 + 40,
+            // color: '#6bff6b',
+            // collisionActive: true,
+            // domain: [0, 10]
+            // },
+            // {
+            // id: 'exp_decay',
+            // func: (x) => 70 - 20 * Math.exp(-0.5 * x),
+            // color: '#ffa500',
+            // collisionActive: true,
+            // domain: [0, 10]
+            // },
+            // {
+            // id: 'log_curve',
+            // func: (x) => 10 * Math.log(x + 1) + 30,
+            // color: '#00bfff',
+            // collisionActive: true,
+            // domain: [0, 10]
+            // }
+            {
+            id: 'polyline_example',
+            data: [ [0,0], [1, 1], [2, 4], [3, 11], [4.3, 40.2]],
+            color: '#0000ff',
+            strokeWidth: 2,
+            opacity: 0.8,
+            isSimplePoints: false,  // Fuerza renderizado como línea
+             collisionActive: true  
+        },
+        {
+            id: 'points_only',
+            data: [[4.3, 40.2],[2,30]],
+            color: '#ff0000',
+            pointRadius: 6,
+            isSimplePoints: true,  
+            collisionActive: true       
+        }
+        ];
+           
+
+        const widget = TimeWidget(testData, {
+            target: document.getElementById('widget-container'),
+            width: 800,
+            height: 400,
+            showGrid: true,
+            //referenceCurves: curves,
+        });
+
+        // Curvas interesantes en el dominio x ∈ [0, 10]
+         const curves2 = [
+//   {
+//     id: 'line_curve',
+//     data: [[0, 10], [2, 30], [4, 40], [6, 60]], // Polilínea
+//     color: '#ff0000',
+//     strokeWidth: 2,
+//     opacity: 0.8,
+//     isSimplePoints: false,  // ← Se renderiza como línea
+//     collisionActive: true
+//   },
+  {
+    id: 'point_curve',
+    data: [[1, 20], [3, 35], [5, 50]], // Puntos individuales
+    color: '#00ff00',
+    pointRadius: 4,         // ← Radio de los círculos
+    strokeColor: '#ffffff', // ← Color del borde
+    strokeWidth: 2,         // ← Grosor del borde
+    opacity: 1,
+    isSimplePoints: true,   // ← Se renderiza como puntos
+    collisionActive: true
+  },
+//   {
+//     id: 'target_point',
+//     data: [[4.3, 40.2]], // Un solo punto exacto
+//     color: '#ff6600',
+//     pointRadius: 8,
+//     strokeColor: '#000000',
+//     strokeWidth: 3,
+//     opacity: 1,
+//     isSimplePoints: true,   // ← Se renderiza como punto
+//     collisionActive: true
+//   }
+];
+ 
+        widget.ts.addReferenceCurveBUILDING(curves2);
+    // widget.ts.addReferenceCurves(curvas , puntosGraficos, puntos reales, detectar colisiones);
+         
+    </script>
+</head>
+<body>
+    <h1>Test de Rendimiento Optimizado</h1>
+      
+    <div id="widget-container"></div>
+           
+    
+</body>
+</html>
