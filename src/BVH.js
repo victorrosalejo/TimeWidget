@@ -635,6 +635,27 @@ function populateBVHReferenceLines(newReferenceLines, BVH) {
     return BVH;
   }
 
+  me.removeReferenceCurves = function (ids) {
+  if (!Array.isArray(ids)) ids = [ids];
+  if (!BVH) return;
+
+  if (Array.isArray(BVH.referenceLines)) {
+    BVH.referenceLines = BVH.referenceLines.filter(r => !ids.includes(r.id));
+  }
+
+  if (Array.isArray(BVH.BVH)) {
+    for (const row of BVH.BVH) {
+      for (const cell of row) {
+        if (cell && cell.referenceLines) {
+          for (const id of ids) cell.referenceLines.delete(id);
+        }
+      }
+    }
+  }
+
+  RCIntersection(BVH);
+};
+
   return me;
 }
 

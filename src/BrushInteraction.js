@@ -623,19 +623,21 @@ function brushFilter() {
     }
   }
 
-  function selectBrushGroup(id) {
-    if (brushGroupSelected === id) return;
+function selectBrushGroup(id) {
+  if (brushGroupSelected === id) return;
+  const old = brushesGroup.get(brushGroupSelected);
+  if (old) old.isActive = false;
 
-    let oldBrushGroupSelected = brushesGroup.get(brushGroupSelected);
-    oldBrushGroupSelected.isActive = false;
-    deselectAllBrushes();
-
-    brushesGroup.get();
-    brushGroupSelected = id;
-    brushesGroup.get(id).isActive = true;
-    brushesGroup.get(id).isEnable = true;
-    drawBrushes();
+  deselectAllBrushes();
+  brushGroupSelected = id;
+  const g = brushesGroup.get(id);
+  if (g) {
+    g.isActive = true;
+    g.isEnable = true;
   }
+  drawBrushes();
+}
+
 
   function computeColor(groupId) {
     return ts.brushesColorScale(groupId);
@@ -711,37 +713,50 @@ function brushFilter() {
   }
 
   function removeBrushGroup(id) {
-    if (!brushesGroup.has(id) || brushesGroup.size <= 1) return;
-    
-    let itKeys = brushesGroup.keys();
-    let newId = itKeys.next().value;
-    // Skip if id is not present
-    if (id === newId) newId = itKeys.next().value;
+  if (!brushesGroup.has(id) || brushesGroup.size <= 1) return;
+  
+  let itKeys = brushesGroup.keys();
+  let newId = itKeys.next().value;
+  if (id === newId) newId = itKeys.next().value;
 
-    let brushGroupToDelete = brushesGroup.get(id);
+  let brushGroupToDelete = brushesGroup.get(id);
 
-    for (let [brushId, brush] of brushGroupToDelete.brushes.entries()) {
-      // delete all brushes of the group to be deleted, except the brush prepared to create a new timeBox
-      if (brush.selection !== null) {
-        removeBrush([brushId, brush]);
-      } else {
-        // Change the brush prepared to create a new timeBox to another group
-        brush.group = newId;
-        brushesGroup.get(newId).brushes.set(brushId, brush);
-        brushGroupToDelete.brushes.delete(brushId);
-      }
+  for (let [brushId, brush] of brushGroupToDelete.brushes.entries()) {
+    if (brush.selection !== null) {
+      removeBrush([brushId, brush]);
+    } else {
+      brush.group = newId;
+      brushesGroup.get(newId).brushes.set(brushId, brush);
+      brushGroupToDelete.brushes.delete(brushId);
     }
-
-    // Select new active group if needed
-    if (brushGroupSelected === id) {
-      brushesGroup.get(newId).isActive = true;
-      brushGroupSelected = newId;
-    }
-
-    brushesGroup.delete(id);
-    if (!suppress) brushFilter();
-    updateGroups();
   }
+
+  if (brushGroupSelected === id) {
+    brushesGroup.get(newId).isActive = true;
+    brushGroupSelected = newId;
+  }
+
+ const wasRC = brushGroupToDelete &&
+               typeof brushGroupToDelete.name === "string" &&
+               brushGroupToDelete.name.startsWith("RC ");
+ if (wasRC) {
+   if (Array.isArray(referenceCurves)) {
+     const idx = referenceCurves.findIndex(c => c.id === id);
+     if (idx !== -1) referenceCurves.splice(idx, 1);
+   }
+   if (BVH_ && typeof BVH_.removeReferenceCurves === "function") {
+     BVH_.removeReferenceCurves([id]);
+   }
+   if (ts && typeof ts.printReferenceCurves === "function") {
+     ts.printReferenceCurves(referenceCurves);
+   }
+ }
+ brushesGroup.delete(id);
+ if (!suppress) brushFilter();
+ drawBrushes();
+  updateGroups();
+}
+
 
   me.updateBrushGroupName = function (id, name) {
     brushesGroup.get(id).name = name;
@@ -801,22 +816,34 @@ if (!suppress) {
     updateGroups();
   };
 
-  me.changeBrushGroupState = function (id, newState) {
-    if (brushesGroup.get(id).isEnable === newState) return; //same state so no update needed
+ me.changeBrushGroupState = function (id, newState) {
+  const g = brushesGroup.get(id);
+  if (!g || g.isEnable === newState) return;
 
-    brushesGroup.get(id).isEnable = newState;
+  g.isEnable = newState;
 
-    if (!newState) {
-      // Hide tooltip if it was in a brush of that group.
-      if (selectedBrush && selectedBrush[1].group === id) {
-        brushTooltip.__hide();
+  if (!newState && selectedBrush && selectedBrush[1].group === id) {
+    brushTooltip.__hide();
+  }
+
+  if (typeof g.name === "string" && g.name.startsWith("RC ")) {
+    const ref = Array.isArray(referenceCurves)
+      ? referenceCurves.find(r => r.id === id)
+      : null;
+
+    if (ref) {
+      ref.isVisible = newState;
+      if (ts && typeof ts.printReferenceCurves === "function") {
+        ts.printReferenceCurves(referenceCurves);
       }
     }
+  }
 
-    drawBrushes();
-    updateStatus();
-    updateGroups();
-  };
+  drawBrushes();
+  updateStatus();
+  updateGroups();
+};
+
 
   me.selectBrushGroup = function (id) {
     selectBrushGroup(id);
@@ -1127,23 +1154,21 @@ if (!suppress) {
     brushFilter();
     drawBrushes();
   };
-
+ 
   //Fucntion to concat the actual referece curves with the news. 
   function updateReferenceCurve(curve) {
-    if (!curve) return;
+  if (!curve) return;
+  if (curve.isVisible === undefined) curve.isVisible = true; 
 
-  // Verify if the curve is already in the referenceCurves array by id
   if (!referenceCurves.some(ref => ref.id === curve.id)) {
-    referenceCurves.push(curve);  
-
-    //Appply scale to the new reference curve
-    let BVHReferenceLines = [curve].map((ref) => {
-      let scaledData = ref.data.map((pt) => [scaleX(pt[0]), scaleY(pt[1])]);
-      return Object.assign({}, ref, { data: scaledData });
-    });
-    
+    referenceCurves.push(curve);
+    const BVHReferenceLines = [curve].map(ref => Object.assign({}, ref, {
+      data: ref.data.map(pt => [scaleX(pt[0]), scaleY(pt[1])])
+    }));
     BVH_.addReferenceCurves(BVHReferenceLines);
-  }  };
+  }
+}
+
   
   me.suppressCallbacks = (on = true) => { suppress = !!on; };
 

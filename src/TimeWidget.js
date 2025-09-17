@@ -1492,84 +1492,86 @@ function generateCurvePoints(curves, domainX, domainY) {
     curve.data.sort((a, b) => a[0] - b[0]);
   });
 
-  return processedCurves; // Devuelve las curvas con puntos procesados
+  return processedCurves; 
 }
   ts.printReferenceCurves = function (curves) {
-    if (!overviewX) return;
-  if (!Array.isArray(curves)) {
-    throw new Error("The reference curves must be an array of Objects");
-  }
-  let domainX = overviewX.domain();
-  let domainY = overviewY.domain();
+  if (!overviewX) return;
+  if (!Array.isArray(curves)) throw new Error("The reference curves must be an array of Objects");
 
-  curves.forEach((c) => {
+  const visible = curves.filter(c => c.isVisible !== false);
+
+  const domainX = overviewX.domain();
+  const domainY = overviewY.domain();
+  visible.forEach(c => {
     c.data.sort((a, b) => d3.ascending(x(a), x(b)));
-    c.data = c.data.filter(
-      (p) =>
-        p[0] >= domainX[0] &&
-        p[0] <= domainX[1] &&
-        p[1] >= domainY[0] &&
-        p[1] <= domainY[1]
-    );
+    c.data = c.data.filter(p => (
+      p[0] >= domainX[0] && p[0] <= domainX[1] &&
+      p[1] >= domainY[0] && p[1] <= domainY[1]
+    ));
   });
 
-  // Separar curvas en líneas y puntos
-  const lineCurves = curves.filter(curve => !curve.isSimplePoints);
-  const pointCurves = curves.filter(curve => curve.isSimplePoints);
+  const lineCurves   = visible.filter(c => !c.isSimplePoints);
+  const pointCurves  = visible.filter(c =>  c.isSimplePoints);
 
-  // RENDERIZAR LÍNEAS para curvas con isSimplePoints = false
-  let line2 = d3
-    .line()
-    .defined((d) => d[1] !== undefined && d[1] !== null)
-    .x((d) => overviewX(d[0]))
-    .y((d) => overviewY(d[1]));
+  // LÍNEAS
+  const line2 = d3.line()
+    .defined(d => d[1] !== undefined && d[1] !== null)
+    .x(d => overviewX(d[0]))
+    .y(d => overviewY(d[1]));
 
-  gReferences
-    .selectAll(".referenceCurve")
-    .data(lineCurves)
-    .join("path")
+  const lineSel = gReferences
+    .selectAll("path.referenceCurve")
+    .data(lineCurves, d => d.id);
+
+  lineSel.exit().remove();
+
+  lineSel.enter()
+    .append("path")
     .attr("class", "referenceCurve")
-    .attr("d", (c) => line2(c.data))
-    .attr("stroke-width", (c) => c.strokeWidth || 2)
+    .merge(lineSel)
+    .attr("d", c => line2(c.data))
+    .attr("stroke-width", c => c.strokeWidth || 2)
     .style("fill", "none")
-    .style("stroke", (c) => c.color)
-    .style("opacity", (c) => c.opacity || 1);
+    .style("stroke", c => c.color)
+    .style("opacity", c => (c.opacity !== undefined && c.opacity !== null ? c.opacity : 1));
 
-  // RENDERIZAR PUNTOS para curvas con isSimplePoints = true
-  // Primero, crear un array plano de todos los puntos con su información de curva
   const allPoints = [];
-  pointCurves.forEach(curve => {
-    curve.data.forEach(point => {
+  pointCurves.forEach(c => {
+    c.data.forEach(p => {
       allPoints.push({
-        x: point[0],
-        y: point[1],
-        curveId: curve.id,
-        color: curve.color,
-        radius: curve.pointRadius || 4,
-        opacity: curve.opacity || 1,
-        strokeColor: curve.strokeColor || '#ffffff',
-        strokeWidth: curve.strokeWidth || 1
+        curveId: c.id,
+        x: p[0],
+        y: p[1],
+        color: c.color,
+        radius: c.pointRadius || 4,
+        opacity: (c.opacity !== undefined && c.opacity !== null) ? c.opacity : 1,
+        strokeColor: c.strokeColor || "#ffffff",
+        strokeWidth: c.strokeWidth || 1
       });
     });
   });
 
-  // Renderizar los círculos
-  gReferences
-    .selectAll(".referencePoint")
-    .data(allPoints)
-    .join("circle")
-    .attr("class", "referencePoint")
-    .attr("cx", (d) => overviewX(d.x))
-    .attr("cy", (d) => overviewY(d.y))
-    .attr("r", (d) => d.radius)
-    .style("fill", (d) => d.color)
-    .style("opacity", (d) => d.opacity)
-    .style("stroke", (d) => d.strokeColor)
-    .style("stroke-width", (d) => d.strokeWidth)
-    .append("title") // Tooltip opcional
-    .text((d) => `${d.curveId}: (${d.x}, ${d.y})`);
+  const ptSel = gReferences
+    .selectAll("circle.referencePoint")
+    .data(allPoints, d => `${d.curveId}:${d.x},${d.y}`);
 
-  };
+  ptSel.exit().remove();
+
+  ptSel.enter()
+    .append("circle")
+    .attr("class", "referencePoint")
+    .merge(ptSel)
+    .attr("cx", d => overviewX(d.x))
+    .attr("cy", d => overviewY(d.y))
+    .attr("r", d => d.radius)
+    .style("fill", d => d.color)
+    .style("opacity", d => d.opacity)
+    .style("stroke", d => d.strokeColor)
+    .style("stroke-width", d => d.strokeWidth)
+    .select(function(){ return this; }) 
+    .append("title")
+    .text(d => `${d.curveId}: (${d.x}, ${d.y})`);
+};
 
 
 
