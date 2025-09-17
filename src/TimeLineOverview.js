@@ -92,11 +92,11 @@ function TimeLineOverview({
       dataSelected.forEach((data, group) => {
         if (group !== groupSelected) {
           let selectedColor = computeColor(group);
-          console.log(
-            "Render selected selectedColor",
-            selectedColor,
-            group
-          );
+          // console.log(
+          //   "Render selected selectedColor",
+          //   selectedColor,
+          //   group
+          // );
 
           // Render selected
           renderOverviewCanvasSubset(

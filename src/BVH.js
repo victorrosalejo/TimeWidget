@@ -294,16 +294,24 @@ function RCIntersection(BVH) {
 
 
 function populateBVHReferenceLines(newReferenceLines, BVH) {
-
   const inBounds = (x, y) => {
     const result = x >= 0 && x < BVH.width && y >= 0 && y < BVH.height;
     return result;
   };
-  // Añadir nuevas curvas de referencia a las existentes en BVH
   if (!BVH.referenceLines) {
     BVH.referenceLines = [];
   }
   BVH.referenceLines = BVH.referenceLines.concat(newReferenceLines);
+  if (!BVH.referenceLines) BVH.referenceLines = [];
+  const byId = new Map(BVH.referenceLines.map(r => [r.id, r]));
+  for (const ref of newReferenceLines) {
+    if (!byId.has(ref.id)) {
+      byId.set(ref.id, ref);
+    } else {
+      byId.set(ref.id, Object.assign({}, byId.get(ref.id), ref));
+    }
+  }
+  BVH.referenceLines = Array.from(byId.values());
   newReferenceLines.forEach((ref) => {
     const id = ref.id;
     const collisionActive = ref.collisionActive;

@@ -48,6 +48,7 @@ function brushInteraction({
     BVH_,
     brushTooltip,
     brushContextMenu,
+    suppress = false,
     brushWithTooltip;
 
   if (!data) return;
@@ -86,7 +87,6 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     referenceLines: BVHReferenceLines, // Added reference lines to the BVH for intersection calculations
   });
 
-
   brushTooltip = brushTooltipEditable({
     fmtX,
     fmtY,
@@ -99,7 +99,6 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     target: contextMenuTarget,
     callback: onContextMenuChange,
   });
-
   function onTooltipChange([[x0, y0], [x1, y1]]) {
     y0 = +y0;
     y1 = +y1;
@@ -254,30 +253,52 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     }
   }
 
-  function brushFilter() {
-    dataNotSelected = [];
-    dataSelected = new Map();
-    brushesGroup.forEach((d, key) => dataSelected.set(key, []));
+function brushFilter() {
+  const newDataSelected = new Map();
+  const selectedIds = new Set();
 
-    if (brushSize > 0) {
-      for (let d of data) {
-        let isSelected = false;
-        for (let [groupId, brushGroup] of brushesGroup.entries()) {
-          if (intersectGroup(d, brushGroup.brushes)) {
-            dataSelected.get(groupId).push(d);
-            isSelected = true;
+  brushesGroup.forEach((group, groupId) => {
+    const isRC = typeof group.name === "string" && group.name.startsWith("RC ");
+    let arr = [];
+
+    if (isRC) {
+      const bvh = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
+      const refs = bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
+      const ref = refs.find(r => r.id === groupId);
+
+      if (ref && Array.isArray(ref.collisions)) {
+        ref.collisions.forEach(c => {
+          const full = data.find(d => d[0] === c.dataId);
+          if (full) {
+            arr.push(full);
+            selectedIds.add(full[0]);
           }
-        }
-        if (!isSelected) {
-          dataNotSelected.push(d);
-        }
+        });
       }
-    } else {
-      dataNotSelected = data;
     }
 
-    selectionCallback(dataSelected, dataNotSelected, brushSize !== 0);
+    newDataSelected.set(groupId, arr);
+  });
+
+  if (brushSize > 0) {
+    for (const d of data) {
+      for (const [groupId, brushGroup] of brushesGroup.entries()) {
+        if (intersectGroup(d, brushGroup.brushes)) {
+          const arr = newDataSelected.get(groupId) || [];
+          if (!arr.some(e => e[0] === d[0])) arr.push(d); // Avoid duplicates
+          newDataSelected.set(groupId, arr);
+          selectedIds.add(d[0]);
+        }
+      }
+    }
   }
+
+  dataSelected = newDataSelected;
+  dataNotSelected = data.filter(d => !selectedIds.has(d[0]));
+
+  const hasAnySelection = selectedIds.size > 0; 
+  if (!suppress) selectionCallback(dataSelected, dataNotSelected, hasAnySelection);
+}
 
   function removeBrush([id, brush]) {
     brushSize--;
@@ -294,8 +315,8 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     statusCallback();
   }
 
-  function updateGroups() {
-    groupsCallback(brushesGroup);
+ function updateGroups() {
+   if (!suppress) groupsCallback(brushesGroup); 
   }
 
   function updateSelectedCoordinates({ selection }) {
@@ -689,13 +710,79 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     });
   }
 
+  function removeBrushGroup(id) {
+    if (!brushesGroup.has(id) || brushesGroup.size <= 1) return;
+    
+    let itKeys = brushesGroup.keys();
+    let newId = itKeys.next().value;
+    // Skip if id is not present
+    if (id === newId) newId = itKeys.next().value;
+
+    let brushGroupToDelete = brushesGroup.get(id);
+
+    for (let [brushId, brush] of brushGroupToDelete.brushes.entries()) {
+      // delete all brushes of the group to be deleted, except the brush prepared to create a new timeBox
+      if (brush.selection !== null) {
+        removeBrush([brushId, brush]);
+      } else {
+        // Change the brush prepared to create a new timeBox to another group
+        brush.group = newId;
+        brushesGroup.get(newId).brushes.set(brushId, brush);
+        brushGroupToDelete.brushes.delete(brushId);
+      }
+    }
+
+    // Select new active group if needed
+    if (brushGroupSelected === id) {
+      brushesGroup.get(newId).isActive = true;
+      brushGroupSelected = newId;
+    }
+
+    brushesGroup.delete(id);
+    if (!suppress) brushFilter();
+    updateGroups();
+  }
+
   me.updateBrushGroupName = function (id, name) {
     brushesGroup.get(id).name = name;
     updateGroups();
     updateStatus();
   };
 
-  me.addBrushGroup = function () {
+  me.updateReferenceCurvesGroup = function (newReferenceCurves) {
+    newReferenceCurves.forEach(ref => {
+      if (!brushesGroup.has(ref.id)) {
+        this.addBrushGroup(true, ref);
+        updateReferenceCurve(ref);
+      }
+    });
+  }
+  
+
+  me.addBrushGroup = function (referenceCurves = false, curve = null) {
+
+    if (referenceCurves) {
+      let newId = curve.id;
+      let brushGroup = {
+        isEnable: true,
+        isActive: false,
+        name: "RC " + newId,
+        brushes: new Map(),
+      }
+    brushesGroup.set(newId, brushGroup);
+    
+    // Poblar dataSelected con las líneas que colisionan
+    let collidingData = [];
+    if (curve.collisions) {
+      curve.collisions.forEach(c => {
+        let fullData = data.find(d => d[0] === c.dataId);
+        if (fullData) collidingData.push(fullData);
+      });
+    }
+    dataSelected.set(newId, collidingData);
+    selectBrushGroup(newId);
+    } else {
+
     let newId = getUnusedIdBrushGroup();
     let brushGroup = {
       isEnable: true,
@@ -703,12 +790,13 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
       name: "Group " + (newId + 1),
       brushes: new Map(),
     };
-
     brushesGroup.set(newId, brushGroup);
     dataSelected.set(newId, []);
     selectBrushGroup(newId);
-
-    selectionCallback(dataSelected, dataNotSelected, brushSize !== 0);
+    }
+if (!suppress) {
+   brushFilter();
+ }
     updateStatus();
     updateGroups();
   };
@@ -741,36 +829,8 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
   };
 
   me.removeBrushGroup = function (id) {
-    if (brushesGroup.length <= 1) return;
-
-    let itKeys = brushesGroup.keys();
-    let newId = itKeys.next().value;
-    newId = newId === id ? itKeys.next().value : newId;
-
-    let brushGroupToDelete = brushesGroup.get(id);
-
-    for (let [id, brush] of brushGroupToDelete.brushes.entries()) {
-      // delete all brushes of the group to be deleted, except the brush prepared to create a new timeBox
-      if (brush.selection !== null) {
-        removeBrush([id, brush]);
-      } else {
-        // Change the brush prepared to create a new timeBox to another group
-        brush.group = newId;
-        brushesGroup.get(newId).brushes.set(id, brush);
-        brushGroupToDelete.brushes.delete(id);
-      }
-    }
-
-    // Select new active group if needed
-    if (brushGroupSelected === id) {
-      brushesGroup.get(newId).isActive = true;
-      brushGroupSelected = newId;
-    }
-
-    brushesGroup.delete(id);
-
-    updateGroups();
-  };
+    removeBrushGroup(id);
+  } 
 
   me.getEnableGroups = function () {
     let enable = new Set();
@@ -787,7 +847,6 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
 
     // Return a copy of brushesGroups without the uninitialized brushes
     let filterBrushesGroup = new Map();
-
     // Deep copy
     brushesGroup.forEach((g, gId) => {
       let o = Object.assign({}, g);
@@ -816,7 +875,16 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
   };
 
   me.hasSelection = function () {
-    return brushSize !== 0;
+     if (brushSize !== 0) return true;
+   const bvh = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
+   const refs = bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
+   for (const [groupId, group] of brushesGroup.entries()) {
+     if (group.name && group.name.startsWith("RC ")) {
+       const ref = refs.find(r => r.id === groupId);
+       if (ref && Array.isArray(ref.collisions) && ref.collisions.length) return true;
+     }
+   }
+   return false;
   };
 
   me.deselectBrush = function () {
@@ -1060,21 +1128,26 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
     drawBrushes();
   };
 
-  me.updateReferenceCurves = function (newReferenceCurves) {
-    let BVHReferenceLines = newReferenceCurves
-      ? newReferenceCurves.map((ref) => {
-          // Solo escalado directo
-          let scaledData = ref.data.map((pt) => {
-            return [scaleX(pt[0]), scaleY(pt[1])];
-          });
-          return Object.assign({}, ref, { data: scaledData });
-        })
-      : null;
-    BVH_.addReferenceCurves(BVHReferenceLines);
-  };
+  //Fucntion to concat the actual referece curves with the news. 
+  function updateReferenceCurve(curve) {
+    if (!curve) return;
 
-  me.getBvhCollisions = function () {
-    console.log(BVH_.getBvh());
+  // Verify if the curve is already in the referenceCurves array by id
+  if (!referenceCurves.some(ref => ref.id === curve.id)) {
+    referenceCurves.push(curve);  
+
+    //Appply scale to the new reference curve
+    let BVHReferenceLines = [curve].map((ref) => {
+      let scaledData = ref.data.map((pt) => [scaleX(pt[0]), scaleY(pt[1])]);
+      return Object.assign({}, ref, { data: scaledData });
+    });
+    
+    BVH_.addReferenceCurves(BVHReferenceLines);
+  }  };
+  
+  me.suppressCallbacks = (on = true) => { suppress = !!on; };
+
+  me.getBvh = function () {
     return BVH_.getBvh();
   }
 
@@ -1098,7 +1171,9 @@ let BVHReferenceLines = referenceCurves ? referenceCurves.map((ref) => {
 
   newBrush();
   drawBrushes();
-
+me.recomputeSelection = function () {
+  brushFilter();
+  };
   return me;
 }
 

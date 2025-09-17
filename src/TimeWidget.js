@@ -692,7 +692,6 @@ function TimeWidget(
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
       referenceCurves: referenceCurves,
     });
-
     
 
     gGroupBrushes
@@ -1189,7 +1188,7 @@ function TimeWidget(
       medianBrushGroups.set(id, median);
     }
 
-    log(" Bins computed", medianBrushGroups);
+    // log(" Bins computed", medianBrushGroups);
   }
 
   // Callback that is called each time the selection made by the brushes is modified.
@@ -1329,24 +1328,18 @@ function TimeWidget(
       return outMap;
     } */
 
-  //REFERENCE CURVES LOGIC 
-function printCollisions(){
-//TODO: PINTAR PUNTOS DE INTERESECCIÓN 
-}
 
 
 
-ts.addReferenceCurveBUILDING = function(curves) {
+ts.addReferenceCurve = function(curves) {
   curves = generateCurvePoints(curves, overviewX.domain(), overviewY.domain());
-  brushes.updateReferenceCurves(curves);
-  
-  // Merge referenceCurves with curves so that referenceCurves contains all curves
-  referenceCurves = Array.isArray(referenceCurves) ? referenceCurves : [];
-  curves = Array.isArray(curves) ? curves : [];
-  referenceCurves = referenceCurves.concat(curves);
-
+  brushes.updateReferenceCurvesGroup(curves);
   this.printReferenceCurves(referenceCurves);
-
+  brushes.suppressCallbacks(true);
+  brushes.updateReferenceCurvesGroup(curves);
+  brushes.suppressCallbacks(false);
+  brushes.recomputeSelection();
+  this.printReferenceCurves(referenceCurves);
 }
 
 function generateCurvePoints(curves, domainX, domainY) {
@@ -1501,7 +1494,6 @@ function generateCurvePoints(curves, domainX, domainY) {
 
   return processedCurves; // Devuelve las curvas con puntos procesados
 }
-//TODO: Entender y modular esta funcion para el pintado de las curvas
   ts.printReferenceCurves = function (curves) {
     if (!overviewX) return;
   if (!Array.isArray(curves)) {
@@ -1628,6 +1620,17 @@ function generateCurvePoints(curves, domainX, domainY) {
       scaleY: overviewY,
     });
     timelineOverview.data(groupedData);
+    if (brushes.suppressCallbacks) brushes.suppressCallbacks(true);
+    brushes.updateReferenceCurvesGroup(brushes.getBvh().referenceLines);
+    if (brushes.suppressCallbacks) brushes.suppressCallbacks(false);
+    if (typeof brushes.recomputeSelection === "function")
+      brushes.recomputeSelection();
+    if (brushes.suppressSelectionCallback)
+      brushes.suppressSelectionCallback(true);
+    brushes.updateReferenceCurvesGroup(brushes.getBvh().referenceLines);
+    if (brushes.suppressSelectionCallback)
+      brushes.suppressSelectionCallback(false);
+    if (brushes.recomputeSelection) brushes.recomputeSelection(); 
 
     generateDataSelectionDiv();
 

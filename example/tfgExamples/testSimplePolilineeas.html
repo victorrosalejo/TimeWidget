@@ -133,9 +133,16 @@ const curves = [
     strokeColor: '#ffffff', // ← Color del borde
     strokeWidth: 2,         // ← Grosor del borde
     opacity: 1,
-    isSimplePoints: true,   // ← Se renderiza como puntos
+    isSimplePoints: false,   // ← Se renderiza como puntos
     collisionActive: true
   },
+    // {
+    //         id: 'points_only2',
+    //         data: [[4.3, 40.2],[2,30]],
+    //         pointRadius: 6,
+    //         isSimplePoints: true,  
+    //         collisionActive: true       
+    //     }   
 //   {
 //     id: 'target_point',
 //     data: [[4.3, 40.2]], // Un solo punto exacto
@@ -148,9 +155,21 @@ const curves = [
 //     collisionActive: true
 //   }
 ];
- 
-        widget.ts.addReferenceCurveBUILDING(curves2);
-    // widget.ts.addReferenceCurves(curvas , puntosGraficos, puntos reales, detectar colisiones);
+const curve3 = [  {
+    id: 'target_point',
+    data: [[4.3, 40.2]], // Un solo punto exacto
+    color: '#ff6600',
+    pointRadius: 8,
+    strokeColor: '#000000',
+    strokeWidth: 3,
+    opacity: 1,
+    isSimplePoints: true,   // ← Se renderiza como punto
+    collisionActive: true
+  }] 
+
+
+         widget.ts.addReferenceCurve(curves2);
+   // widget.ts.addReferenceCurveBUILDING(curve3);
          
     </script>
 </head>
