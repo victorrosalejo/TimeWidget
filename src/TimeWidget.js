@@ -121,10 +121,88 @@ function TimeWidget(
     hasScaleTime,
     nGroupsData,
     timelineDetails, // Centralizes the details component
-    timelineOverview, // Centralizes the overview component
+    timelineOverview,
     brushes; // Stores the reference lines
-    
+  let gProbes;
+  let probes = new Map(); // id -> { id, refId, x, side, color }
+  let probeSeq = 0; 
+  const probePairs = new Map();  
+function getRefCurveById(refId) {
+  if (!Array.isArray(referenceCurves)) return null;
+  return referenceCurves.find(c => c.id === refId && c.isVisible !== false) || null;
+}
 
+
+function isGroupEnabled(groupId) {
+  // Evitar optional chaining para compatibilidad
+  let groups = null;
+  if (brushes && typeof brushes.getBrushesGroup === "function") {
+    groups = brushes.getBrushesGroup();
+  }
+  const g = groups && typeof groups.get === "function" ? groups.get(groupId) : null;
+  return !!(g && g.isEnable);
+}
+
+
+function isRefPolylineSelected() {
+  const gid = brushes.getBrushGroupSelected();
+  if (gid == null) return { ok: false };
+
+  const g = brushes.getBrushesGroup().get(gid);
+  if (!g) return { ok: false };
+
+  const name = (g.name || "").trim();
+  if (!name.startsWith("RC ")) return { ok: false };
+
+  // Heurística: el id de la curva suele ir tras "RC "
+  const refIdGuess = name.slice(3).trim();
+
+  // Intentos razonables de emparejar grupo ↔ curva
+  let ref =
+    (Array.isArray(referenceCurves) && (
+      referenceCurves.find(r => String(r.id).trim() === refIdGuess) ||
+      referenceCurves.find(r => String(r.id).trim() === name) ||
+      referenceCurves.find(r => String(r.name || "").trim() === refIdGuess)
+    )) || null;
+
+  if (!ref) return { ok: false };
+  if (ref.isSimplePoints) return { ok: false }; // solo polilínea
+
+  return { ok: true, groupId: gid, ref };
+}
+
+
+// util: delta de dominio equivalente a N píxeles (para bloquear cruces)
+function domainDxFromPixels(px = 6) {
+  // convierte 0px y px a dominio (soporta Date y número)
+  const d0 = +overviewX.invert(0);
+  const d1 = +overviewX.invert(px);
+  return Math.abs(d1 - d0) || 0;
+}
+
+// util: primera curva de referencia visible
+function getFirstVisibleRef() {
+  return Array.isArray(referenceCurves)
+    ? referenceCurves.find(c => c.isVisible !== false && !c.isSimplePoints)
+    : null;
+}
+// Interpolación lineal y clamp a extremos
+function getYAtX(curve, x) {
+  if (!curve || !Array.isArray(curve.data) || !curve.data.length) return null;
+  const data = curve.data;
+  let lo = 0, hi = data.length - 1;
+
+  if (x <= data[0][0])  return data[0][1];
+  if (x >= data[hi][0]) return data[hi][1];
+
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (data[mid][0] <= x) lo = mid; else hi = mid;
+  }
+  const [x0,y0] = data[lo], [x1,y1] = data[hi];
+  const t = (x - x0) / (x1 - x0);
+  return y0*(1-t) + y1*t;
+}
   // Exported Parameters
   ts.xPartitions = xPartitions;
   ts.yPartitions = yPartitions;
@@ -220,11 +298,14 @@ function TimeWidget(
     groupsElement
       .querySelector("button#btnAddBrushGroup")
       .addEventListener("click", onAddBrushGroup);
+  
 
     if (showBrushesControls) {
       d3.select(groupsElement).insert("h3", ":first-child").text("Groups:");
       divControls.appendChild(groupsElement);
     }
+
+    
   }
 
   function computeBrushColor(groupId) {
@@ -241,6 +322,8 @@ function TimeWidget(
 
   function onChangeBrushGroupState(id, newState) {
     brushes.changeBrushGroupState(id, newState);
+    ts.printProbePairs();
+    renderBrushesControls();
   }
 
   function onRemoveBrushGroup(id) {
@@ -404,6 +487,57 @@ function TimeWidget(
         let id = d3.select(this).attr("id").substr("11");
         onSelectBrushGroup(+id);
       });
+
+      // --- CONTROLES DEL PAR DE PROBES (condicionales por grupo RC polilínea) ---
+d3.select(groupsElement).selectAll("#probePairControls").remove();
+const controls = d3.select(groupsElement)
+  .append("div")
+  .attr("id", "probePairControls")
+  .style("margin-top", "8px");
+
+const sel = isRefPolylineSelected();
+if (sel.ok && isGroupEnabled(sel.groupId)) {
+  const hasPair = probePairs.has(sel.groupId);
+
+  if (!hasPair) {
+    // Botón para crear el par (con ligera separación)
+    controls
+      .append("button")
+      .text("Add Pair (izq./dcha.)")
+      .on("click", () => {
+        ts.addProbePairForGroup({
+          groupId: sel.groupId,
+          gapPx: 24,
+          side: "above",
+        });
+      });
+  } else {
+    // Selector Above/Below
+    controls.append("label").text("Side: ").style("margin-right", "6px");
+    const sideSel = controls
+      .append("select")
+      .on("change", (e) => ts.setProbePairSide(sel.groupId, e.target.value));
+    sideSel
+      .selectAll("option")
+      .data(["above", "below"])
+      .join("option")
+      .attr("value", (d) => d)
+      .property("selected", (d) => d === probePairs.get(sel.groupId).side)
+      .text((d) => (d === "above" ? "Above (arriba)" : "Below (abajo)"));
+
+    // Botón eliminar par
+    controls
+      .append("button")
+      .style("margin-left", "8px")
+      .style("color", "crimson")
+      .text("Remove Pair")
+      .on("click", () => ts.removeProbePairForGroup(sel.groupId));
+  }
+} else {
+  // No mostrarmos nada si no es RC polilínea
+  controls.remove();
+}
+
   }
 
   function initDomains({ xDataType, fData }) {
@@ -612,8 +746,9 @@ function TimeWidget(
       .attr("class", "gReferences")
       .style("pointer-events", "none");
 
-    gmainY
-      .selectAll("g.tick")
+
+      gmainY
+      .selectAll("g.tick")  
       .selectAll(".gridline")
       .data(ts.showGrid ? [1] : [])
       .join("line")
@@ -661,6 +796,12 @@ function TimeWidget(
       .data([1])
       .join("g")
       .attr("id", "brushes");
+
+      gProbes = g
+  .selectAll("g.gProbes")
+  .data([1])
+  .join("g")
+  .attr("class", "gProbes");
 
     //Before create the brushes structure, we generete the reerence lines points.
     //THIS IS ONLY TO GENERATE POINTS FOR THE FUNCTIONS 
@@ -710,6 +851,7 @@ function TimeWidget(
 
     return g;
   }
+
 
   // Callback that is called every time the coordinates of the selected brush are modified.
   function onBrushCoordinatesChange(selection) {
@@ -1190,6 +1332,336 @@ function TimeWidget(
 
     // log(" Bins computed", medianBrushGroups);
   }
+// === API pública de Probes + pintado ===
+ts.addProbe = function ({ refId, x, side = "above", color = null } = {}) {
+  if (!refId) {
+    const first = Array.isArray(referenceCurves)
+      ? referenceCurves.find(c => c.isVisible !== false)
+      : null;
+    if (!first) { console.warn("addProbe: no hay curvas de referencia visibles"); return null; }
+    refId = first.id;
+  }
+  const ref = getRefCurveById(refId);
+  if (!ref || !ref.data || !ref.data.length) return null;
+
+  if (x === undefined || x === null) {
+    const [dx0, dx1] = overviewX.domain();
+    x = (+(dx0) + +(dx1)) / 2;
+    if (dx0 instanceof Date) x = new Date(x);
+  }
+
+  const minCx = ref.data[0][0];
+  const maxCx = ref.data[ref.data.length - 1][0];
+  const xNum = +x; // Date o number → number para comparar
+  x = Math.max(+minCx, Math.min(+maxCx, xNum));
+  if (minCx instanceof Date) x = new Date(x);
+
+  const id = ++probeSeq;
+  const c  = color || ref.color || "#333";
+  probes.set(id, { id, refId, x, side, color: c });
+  ts.printProbes();
+  return id;
+};
+
+ts.moveProbe = function (id, x) {
+  const p = probes.get(id);
+  if (!p) return;
+  const ref = getRefCurveById(p.refId);
+  if (!ref || !ref.data || !ref.data.length) return;
+  const minCx = +ref.data[0][0];
+  const maxCx = +ref.data[ref.data.length - 1][0];
+  const xNum  = +x;
+  p.x = Math.max(minCx, Math.min(maxCx, xNum));
+  if (ref.data[0][0] instanceof Date) p.x = new Date(p.x);
+  ts.printProbes();
+};
+
+ts.removeProbe = function (id) {
+  probes.delete(id);
+  ts.printProbes();
+};
+
+ts.printProbes = function () {
+  if (!overviewX || !overviewY) return;
+
+  const data = Array.from(probes.values()).filter(p => !!getRefCurveById(p.refId));
+
+  const sel = gProbes
+    .selectAll("g.probe")
+    .data(data, d => d.id);
+
+  sel.exit().remove();
+
+  const enter = sel.enter()
+    .append("g")
+    .attr("class", "probe")
+    .style("cursor", "ew-resize");
+
+  enter.append("line").attr("class", "probe-line");
+  enter.append("text")
+    .attr("class", "probe-label")
+    .style("font-family", "sans-serif")
+    .style("font-size", "10px")
+    .style("paint-order", "stroke")
+    .style("stroke", "#fff")
+    .style("stroke-width", 3)
+    .style("stroke-opacity", 0.8);
+
+  const drag = d3.drag()
+    .on("drag", (event, d) => {
+      const [mx] = d3.pointer(event, gProbes.node());
+      let xDom = overviewX.invert(mx);
+      const ref = getRefCurveById(d.refId);
+      if (!ref) return;
+      const minCx = +ref.data[0][0];
+      const maxCx = +ref.data[ref.data.length - 1][0];
+      xDom = Math.max(minCx, Math.min(maxCx, +xDom));
+      d.x = (ref.data[0][0] instanceof Date) ? new Date(xDom) : xDom;
+      ts.printProbes();
+    });
+
+  enter.call(drag)
+    .on("dblclick", (e, d) => { d.side = d.side === "above" ? "below" : "above"; ts.printProbes(); })
+    .on("contextmenu", (e, d) => { e.preventDefault(); ts.removeProbe(d.id); });
+
+  const all = enter.merge(sel);
+
+  all.each(function (d) {
+    const ref = getRefCurveById(d.refId);
+    if (!ref) return;
+
+    const yCurve = getYAtX(ref, +d.x);
+    if (yCurve == null) return;
+
+    const xPx      = overviewX(d.x);
+    const yCurvePx = overviewY(yCurve);
+    const [yMin, yMax] = overviewY.domain();
+    const yEndPx   = (d.side === "above") ? overviewY(yMax) : overviewY(yMin);
+
+    d3.select(this).select("line.probe-line")
+      .attr("x1", xPx).attr("x2", xPx)
+      .attr("y1", yCurvePx).attr("y2", yEndPx)
+      .attr("stroke", d.color).attr("stroke-width", 2).attr("opacity", 0.9);
+
+    const label = `${fmtX ? fmtX(d.x) : d.x} · ${fmtY ? fmtY(yCurve) : yCurve}`;
+    const lbl = d3.select(this).select("text.probe-label")
+      .text(label).attr("x", xPx + 6).attr("fill", d.color);
+
+    if (d.side === "above") {
+      lbl.attr("y", yEndPx + 12).attr("text-anchor", "start");
+    } else {
+      lbl.attr("y", yCurvePx - 6).attr("text-anchor", "start");
+    }
+  });
+};
+
+
+
+ts.addProbePairForGroup = function ({
+  groupId = brushes.getBrushGroupSelected(),
+  refId,
+  side = "above",
+  gapPx = 24,                 // separación inicial visual
+  colorLeft = "#ff7f0e",
+  colorRight = "#1f77b4",
+} = {}) {
+  // Sólo si el seleccionado es RC polilínea
+  const sel = isRefPolylineSelected();
+  if (!sel.ok) {
+    console.warn("No RC polilínea seleccionada; no se crea el par.");
+    return;
+  }
+  groupId = sel.groupId;
+  const ref = refId ? referenceCurves.find(c => c.id === refId) : sel.ref;
+  if (!ref || !ref.data || !ref.data.length) return;
+
+  // centro del dominio X visible (Date o Number)
+  const [dx0, dx1] = overviewX.domain();
+  const centerNum = (+dx0 + +dx1) / 2;
+  const centerX = (dx0 instanceof Date) ? new Date(centerNum) : centerNum;
+
+  // separación en píxeles → dominio
+  const cxPx = overviewX(centerX);
+  const leftPx  = cxPx - gapPx/2;
+  const rightPx = cxPx + gapPx/2;
+  let L = overviewX.invert(leftPx);
+  let R = overviewX.invert(rightPx);
+
+  // clamp al dominio de la curva de referencia
+  const minCx = +ref.data[0][0];
+  const maxCx = +ref.data[ref.data.length - 1][0];
+  L = Math.max(minCx, Math.min(maxCx, +L));
+  R = Math.max(minCx, Math.min(maxCx, +R));
+  if (L > R) [L, R] = [R, L];
+  if (ref.data[0][0] instanceof Date) { L = new Date(L); R = new Date(R); }
+
+  probePairs.set(groupId, {
+    groupId, refId: ref.id, side,
+    leftX: L, rightX: R,
+    colorLeft, colorRight,
+    minGapPx: 0   
+  });
+
+  ts.printProbePairs();
+  renderBrushesControls();   
+};
+
+
+ts.moveProbeOfPair = function (groupId, which, xDom) {
+  const p = probePairs.get(groupId);
+  if (!p) return;
+  const ref = referenceCurves.find(c => c.id === p.refId);
+  if (!ref || !ref.data || !ref.data.length) return;
+
+  const minCx = +ref.data[0][0];
+  const maxCx = +ref.data[ref.data.length - 1][0];
+
+  let x = Math.max(minCx, Math.min(maxCx, +xDom));
+
+  // Gap mínimo en píxeles → dominio (0 por defecto = se pueden tocar)
+  const px = (typeof p.minGapPx === "number") ? p.minGapPx : 0;
+  const gap = domainDxFromPixels(px);
+
+  if (which === "left") {
+    // Permite igualdad: left <= right - gap  → si gap=0, left <= right
+    const maxLeft = Math.min(+p.rightX - gap, maxCx);
+    x = Math.min(x, maxLeft);
+    if (x > +p.rightX - gap) x = +p.rightX - gap; // clamp final seguro
+    p.leftX = (ref.data[0][0] instanceof Date) ? new Date(x) : x;
+  } else { // right
+    const minRight = Math.max(+p.leftX + gap, minCx);
+    x = Math.max(x, minRight);
+    if (x < +p.leftX + gap) x = +p.leftX + gap;
+    p.rightX = (ref.data[0][0] instanceof Date) ? new Date(x) : x;
+  }
+
+  ts.printProbePairs();
+};
+
+
+ts.removeProbePairForGroup = function (groupId) {
+  probePairs.delete(groupId);
+  ts.printProbePairs();
+  renderBrushesControls(); 
+};
+
+ts.setProbePairSide = function (groupId, side) {
+  const p = probePairs.get(groupId);
+  if (!p) return;
+  p.side = (side === "below") ? "below" : "above";
+  ts.printProbePairs();
+  renderBrushesControls(); 
+};
+
+ts.toggleProbePairSide = function (groupId) {
+  const p = probePairs.get(groupId);
+  if (!p) return;
+  p.side = (p.side === "above") ? "below" : "above";
+  ts.printProbePairs();
+  ts.renderBrushesControls(); 
+};
+
+ts.printProbePairs = function () {
+  if (!overviewX || !overviewY) return;
+
+  const data = Array.from(probePairs.values()).filter(p => {
+  if (!isGroupEnabled(p.groupId)) return false;              // grupo oculto → no pintar
+  const ref = Array.isArray(referenceCurves)
+    ? referenceCurves.find((c) => c.id === p.refId)
+    : null;
+  if (!ref) return false;
+  if (ref.isSimplePoints) return false;                      // sólo polilínea
+  if (ref.isVisible === false) return false;                 // referencia oculta
+  return true;
+});
+
+  const sel = gProbes
+    .selectAll("g.probePair")
+    .data(data, d => d.groupId);
+
+  sel.exit().remove();
+
+  const enter = sel.enter()
+    .append("g")
+    .attr("class", "probePair");
+
+  // crea subgrupos left/right con línea visible + hit-area + etiqueta + title
+  ["left","right"].forEach(which => {
+    const gSide = enter.append("g").attr("class", `probe-${which}`);
+    gSide.append("line").attr("class", "probe-line");
+    gSide.append("line")
+      .attr("class", "probe-hit")
+      .style("stroke", "transparent")
+      .style("stroke-width", 12)
+      .style("cursor", "ew-resize");
+    gSide.append("text")
+      .attr("class", "probe-label")
+      .style("font-family", "sans-serif")
+      .style("font-size", "10px")
+      .style("paint-order", "stroke")
+      .style("stroke", "#fff")
+      .style("stroke-width", 3)
+      .style("stroke-opacity", 0.8);
+    gSide.append("title")
+      .text("Arrastra para mover · Doble clic: arriba/abajo · Click derecho: borrar par");
+  });
+
+  const all = enter.merge(sel);
+
+  const dragSide = (which) => d3.drag().on("drag", (event, d) => {
+    const [mx] = d3.pointer(event, gProbes.node());
+    const xDom = overviewX.invert(mx);
+    ts.moveProbeOfPair(d.groupId, which, xDom);
+  });
+
+  const wireEvents = (which, g) => {
+    g.call(dragSide(which))
+     .on("dblclick", (e, d) => ts.toggleProbePairSide(d.groupId))
+     .on("contextmenu", (e, d) => { e.preventDefault(); ts.removeProbePairForGroup(d.groupId); });
+  };
+
+  all.each(function (d) {
+    const ref = referenceCurves.find(c => c.id === d.refId);
+    if (!ref) return;
+
+    const paint = (which, xDom, color) => {
+      // usa tu getYAtX(curve,x) si ya la tienes definida
+      const yC = getYAtX(ref, +xDom);
+      const xPx = overviewX(xDom);
+      const yCurvePx = overviewY(yC);
+      const [yMin, yMax] = overviewY.domain();
+      const yEndPx = (d.side === "above") ? overviewY(yMax) : overviewY(yMin);
+
+      const gSide = d3.select(this).select(`g.probe-${which}`);
+
+      gSide.select("line.probe-line")
+        .attr("x1", xPx).attr("x2", xPx)
+        .attr("y1", yCurvePx).attr("y2", yEndPx)
+        .attr("stroke", color).attr("stroke-width", 2).attr("opacity", 0.95);
+
+      gSide.select("line.probe-hit")
+        .attr("x1", xPx).attr("x2", xPx)
+        .attr("y1", yCurvePx).attr("y2", yEndPx);
+
+      const label = `${fmtX ? fmtX(xDom) : xDom} · ${fmtY ? fmtY(yC) : yC}`;
+      const lbl = gSide.select("text.probe-label")
+        .text(label)
+        .attr("x", xPx + 6)
+        .attr("fill", color);
+
+      if (d.side === "above") {
+        lbl.attr("y", yEndPx + 12).attr("text-anchor", "start");
+      } else {
+        lbl.attr("y", yCurvePx - 6).attr("text-anchor", "start");
+      }
+
+      wireEvents(which, gSide);
+    };
+
+    paint.call(this, "left",  d.leftX,  d.colorLeft);
+    paint.call(this, "right", d.rightX, d.colorRight);
+  });
+};
 
   // Callback that is called each time the selection made by the brushes is modified.
   function onSelectionChange(
@@ -1216,16 +1688,27 @@ function TimeWidget(
       getBrushGroupsMedians(renderSelected);
     }
 
-
     render(renderSelected, renderNotSelected, hasSelection); // Print the filtered data by active dataGroups
-
+    
     renderBrushesControls();
     triggerValueUpdate(renderSelected);
+    ts.printProbes();
+     ts.printProbePairs(); 
   }
 
   // Called every time the brushGroups changes
   function onBrushGroupsChange() {
     render(renderSelected, renderNotSelected, brushes.hasSelection());
+    const existing = new Set(
+      (brushes && typeof brushes.getBrushesGroup === "function"
+        ? brushes.getBrushesGroup()
+        : new Map()
+      ).keys()
+    );
+    for (const gid of Array.from(probePairs.keys())) {
+      if (!existing.has(gid)) probePairs.delete(gid);
+    }
+    ts.printProbePairs();
     renderBrushesControls();
     triggerValueUpdate();
   }
@@ -1335,11 +1818,15 @@ ts.addReferenceCurve = function(curves) {
   curves = generateCurvePoints(curves, overviewX.domain(), overviewY.domain());
   brushes.updateReferenceCurvesGroup(curves);
   this.printReferenceCurves(referenceCurves);
+    ts.printProbes();
+     ts.printProbePairs(); 
   brushes.suppressCallbacks(true);
   brushes.updateReferenceCurvesGroup(curves);
   brushes.suppressCallbacks(false);
   brushes.recomputeSelection();
   this.printReferenceCurves(referenceCurves);
+  ts.printProbes();
+   ts.printProbePairs(); 
 }
 
 function generateCurvePoints(curves, domainX, domainY) {
@@ -1502,13 +1989,13 @@ function generateCurvePoints(curves, domainX, domainY) {
 
   const domainX = overviewX.domain();
   const domainY = overviewY.domain();
-  visible.forEach(c => {
-    c.data.sort((a, b) => d3.ascending(x(a), x(b)));
-    c.data = c.data.filter(p => (
-      p[0] >= domainX[0] && p[0] <= domainX[1] &&
-      p[1] >= domainY[0] && p[1] <= domainY[1]
-    ));
-  });
+ visible.forEach(c => {
+  c.data.sort((a, b) => d3.ascending(a[0], b[0]));
+  c.data = c.data.filter(p => (
+    p[0] >= domainX[0] && p[0] <= domainX[1] &&
+    p[1] >= domainY[0] && p[1] <= domainY[1]
+  ));
+});
 
   const lineCurves   = visible.filter(c => !c.isSimplePoints);
   const pointCurves  = visible.filter(c =>  c.isSimplePoints);
@@ -1667,6 +2154,8 @@ function generateCurvePoints(curves, domainX, domainY) {
 
   if (referenceCurves) {
     ts.printReferenceCurves(referenceCurves);
+  ts.printProbes();
+   ts.printProbePairs(); 
   }
 
   // To allow a message from the outside to rerender
@@ -1674,6 +2163,7 @@ function generateCurvePoints(curves, domainX, domainY) {
     // render(dataSelected, dataNotSelected);
     onSelectionChange();
   };
+
 
   // Remove possible previous event listener
   //target.removeEventListener("TimeWidget", onTimeWidgetEvent);
