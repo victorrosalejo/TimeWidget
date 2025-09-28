@@ -832,6 +832,7 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       groupsCallback: onBrushGroupsChange,
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
       referenceCurves: referenceCurves,
+      getProbePairBoxes: () => ts.getProbePairBoxesPixels(),
     });
     
 
@@ -1261,7 +1262,9 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
 
 
     // Delete the notSelected elements that are selected.
-    mDataSelected.forEach((d) => mDataNotSelected.delete(d));
+    mDataSelected.forEach((arr) => {
+      for (const item of arr) mDataNotSelected.delete(item);
+    });
     dataNotSelected = Array.from(mDataNotSelected);
 
     timelineOverview.render(
@@ -1503,6 +1506,7 @@ ts.addProbePairForGroup = function ({
   });
 
   ts.printProbePairs();
+  brushes.recomputeSelection(); 
   renderBrushesControls();   
 };
 
@@ -1534,14 +1538,15 @@ ts.moveProbeOfPair = function (groupId, which, xDom) {
     if (x < +p.leftX + gap) x = +p.leftX + gap;
     p.rightX = (ref.data[0][0] instanceof Date) ? new Date(x) : x;
   }
-
   ts.printProbePairs();
+  brushes.recomputeSelection();
 };
 
 
 ts.removeProbePairForGroup = function (groupId) {
   probePairs.delete(groupId);
   ts.printProbePairs();
+  brushes.recomputeSelection();
   renderBrushesControls(); 
 };
 
@@ -1550,6 +1555,7 @@ ts.setProbePairSide = function (groupId, side) {
   if (!p) return;
   p.side = (side === "below") ? "below" : "above";
   ts.printProbePairs();
+  brushes.recomputeSelection();
   renderBrushesControls(); 
 };
 
@@ -1558,7 +1564,8 @@ ts.toggleProbePairSide = function (groupId) {
   if (!p) return;
   p.side = (p.side === "above") ? "below" : "above";
   ts.printProbePairs();
-  ts.renderBrushesControls(); 
+  brushes.recomputeSelection();
+  renderBrushesControls(); 
 };
 
 ts.printProbePairs = function () {
@@ -1662,6 +1669,51 @@ ts.printProbePairs = function () {
     paint.call(this, "right", d.rightX, d.colorRight);
   });
 };
+
+ts.getProbePairBoxesPixels = function () {
+  if (!overviewX || !overviewY) return [];
+  const out = [];
+
+  // top/bottom en píxeles
+  const [yMin, yMax] = overviewY.domain();
+  const topPx    = overviewY(yMax);
+  const bottomPx = overviewY(yMin);
+
+  for (const [groupId, p] of probePairs.entries()) {
+    // sólo si el grupo está habilitado y la curva existe/visible y es polilínea
+    if (!isGroupEnabled(groupId)) continue;
+    const ref = Array.isArray(referenceCurves)
+      ? referenceCurves.find(c => c.id === p.refId && c.isVisible !== false && !c.isSimplePoints)
+      : null;
+    if (!ref || !Array.isArray(ref.data) || !ref.data.length) continue;
+
+    // X en dominio → píxel
+    const L = +p.leftX, R = +p.rightX;
+    let x0p = overviewX(Math.min(L, R));
+    let x1p = overviewX(Math.max(L, R));
+
+    // Y de la curva en los extremos de la pareja (interpolado)
+    const yLeftPx  = overviewY(getYAtX(ref, L));
+    const yRightPx = overviewY(getYAtX(ref, R));
+
+    // Construimos el rectángulo vertical: [ [x0,y0], [x1,y1] ] con y ascendente en píxeles
+    let y0p, y1p;
+    if (p.side === "above") {
+      y0p = Math.min(topPx, bottomPx);           // arriba
+      y1p = Math.max(yLeftPx, yRightPx);         // hasta el más "bajo" de los extremos en píxel
+    } else {
+      y0p = Math.min(yLeftPx, yRightPx);         // parte superior del rectángulo (por encima del extremo más alto)
+      y1p = Math.max(topPx, bottomPx);           // abajo
+    }
+    if (x0p > x1p) [x0p, x1p] = [x1p, x0p];
+    if (y0p > y1p) [y0p, y1p] = [y1p, y0p];
+
+    out.push({ groupId, box: [[x0p, y0p], [x1p, y1p]] });
+  }
+
+  return out;
+};
+
 
   // Callback that is called each time the selection made by the brushes is modified.
   function onSelectionChange(
@@ -1816,18 +1868,15 @@ ts.printProbePairs = function () {
 
 ts.addReferenceCurve = function(curves) {
   curves = generateCurvePoints(curves, overviewX.domain(), overviewY.domain());
-  brushes.updateReferenceCurvesGroup(curves);
-  this.printReferenceCurves(referenceCurves);
-    ts.printProbes();
-     ts.printProbePairs(); 
   brushes.suppressCallbacks(true);
   brushes.updateReferenceCurvesGroup(curves);
   brushes.suppressCallbacks(false);
   brushes.recomputeSelection();
-  this.printReferenceCurves(referenceCurves);
+  ts.printReferenceCurves(referenceCurves);
   ts.printProbes();
-   ts.printProbePairs(); 
-}
+  ts.printProbePairs();
+};
+
 
 function generateCurvePoints(curves, domainX, domainY) {
   if (!Array.isArray(curves)) {
@@ -1923,6 +1972,9 @@ function generateCurvePoints(curves, domainX, domainY) {
       const processedCurve = Object.assign({}, curve);
       processedCurve.collisionActive = typeof curve.collisionActive !== "undefined" ? curve.collisionActive : false;
       processedCurve.isSimplePoints = typeof curve.isSimplePoints !== "undefined" ? curve.isSimplePoints : true;
+        if ((processedCurve.color == null || processedCurve.color === "") && ts && typeof ts.brushesColorScale === "function") {
+          processedCurve.color = ts.brushesColorScale(processedCurve.id);
+        }
       if (typeof curve.collisions === "undefined") {
         processedCurve.collisions = null;
       }

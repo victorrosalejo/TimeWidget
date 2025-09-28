@@ -30,7 +30,8 @@ function brushInteraction({
   changeSelectedCoordinatesCallback = () => {}, // (selection) => {} Called when the coordinates of the selected brush change.
   selectedBrushCallback = () => {}, // (brush) => {} Called when the selected Brush changes.
   statusCallback = () => {}, // (status) => {}
-  referenceCurves
+  referenceCurves,
+  getProbePairBoxes   
 }) {
   let me = {},
     brushSize,
@@ -257,24 +258,39 @@ function brushFilter() {
   const newDataSelected = new Map();
   const selectedIds = new Set();
 
+  const pairBoxesByGroup = new Map();
+  if (typeof getProbePairBoxes === "function") {
+    const boxes = getProbePairBoxes() || [];
+    boxes.forEach(({ groupId, box }) => pairBoxesByGroup.set(groupId, box));
+  }
+
   brushesGroup.forEach((group, groupId) => {
     const isRC = typeof group.name === "string" && group.name.startsWith("RC ");
     let arr = [];
 
     if (isRC) {
-      const bvh = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
+      const bvh  = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
       const refs = bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
-      const ref = refs.find(r => r.id === groupId);
+      const ref  = refs.find(r => r.id === groupId);
 
       if (ref && Array.isArray(ref.collisions)) {
-        ref.collisions.forEach(c => {
+        const seen = new Set();
+        for (const c of ref.collisions) {
           const full = data.find(d => d[0] === c.dataId);
-          if (full) {
+          if (full && !seen.has(full[0])) {
             arr.push(full);
-            selectedIds.add(full[0]);
+            seen.add(full[0]);
           }
-        });
+        }
       }
+
+      if (pairBoxesByGroup.has(groupId)) {
+        const [[x0, y0], [x1, y1]] = pairBoxesByGroup.get(groupId);
+        const idsInBox = BVH_.intersect(x0, y0, x1, y1);
+        arr = arr.filter(d => idsInBox.has(d[0]));
+      }
+
+      for (const it of arr) selectedIds.add(it[0]);
     }
 
     newDataSelected.set(groupId, arr);
@@ -285,9 +301,11 @@ function brushFilter() {
       for (const [groupId, brushGroup] of brushesGroup.entries()) {
         if (intersectGroup(d, brushGroup.brushes)) {
           const arr = newDataSelected.get(groupId) || [];
-          if (!arr.some(e => e[0] === d[0])) arr.push(d); // Avoid duplicates
+          if (!arr.some(e => e[0] === d[0])) {
+            arr.push(d);
+            selectedIds.add(d[0]);
+          }
           newDataSelected.set(groupId, arr);
-          selectedIds.add(d[0]);
         }
       }
     }
@@ -296,9 +314,11 @@ function brushFilter() {
   dataSelected = newDataSelected;
   dataNotSelected = data.filter(d => !selectedIds.has(d[0]));
 
-  const hasAnySelection = selectedIds.size > 0; 
+  const hasAnySelection = selectedIds.size > 0;
   if (!suppress) selectionCallback(dataSelected, dataNotSelected, hasAnySelection);
 }
+
+
 
   function removeBrush([id, brush]) {
     brushSize--;
@@ -671,12 +691,16 @@ function selectBrushGroup(id) {
       })
       .style("-webkit-filter", brushShadowIfSelected)
       .style("filter", brushShadowIfSelected)
-      .style("display", (d) =>
-        brushesGroup.get(d[1].group).isEnable ? "" : "none"
-      ) // Hide brushes when their group is not enabled
-      .style("pointer-events", (d) =>
-        d[1].group === brushGroupSelected ? "all" : "none"
-      ) // disable interaction with not active brushes.
+      .style("display", (d) => {
+          const g = brushesGroup.get(d[1].group);
+          const isPlaceholder = d[0] === brushCount - 1;
+          return (isPlaceholder || (g && g.isEnable)) ? "" : "none";
+        })
+        // Permitir eventos si es el placeholder O si pertenece al grupo seleccionado
+        .style("pointer-events", (d) => {
+          const isPlaceholder = d[0] === brushCount - 1;
+          return (isPlaceholder || d[1].group === brushGroupSelected) ? "all" : "none";
+        })
       .each(drawOneBrush);
 
     brushesSelection.each(function (d) {
@@ -764,13 +788,27 @@ function selectBrushGroup(id) {
     updateStatus();
   };
 
-  me.updateReferenceCurvesGroup = function (newReferenceCurves) {
+   me.updateReferenceCurvesGroup = function (newReferenceCurves) {
+    this.suppressCallbacks(true);
+    let added = false;
     newReferenceCurves.forEach(ref => {
+      // 1) primero BVH (calcula/almacena colisiones)
+      updateReferenceCurve(ref);
+      // 2) luego el grupo (si no existía)
       if (!brushesGroup.has(ref.id)) {
         this.addBrushGroup(true, ref);
-        updateReferenceCurve(ref);
+        added = true;
       }
     });
+    this.suppressCallbacks(false);
+    if (added) {
+      brushFilter();                  // RC ∩ pair-box ∪ brushes
+      if (ts && typeof ts.printReferenceCurves === "function") {
+        ts.printReferenceCurves(referenceCurves);
+      }
+      drawBrushes();
+      updateGroups();
+    }
   }
   
 
@@ -842,6 +880,30 @@ if (!suppress) {
   drawBrushes();
   updateStatus();
   updateGroups();
+
+  // Si acabo de ocultar el grupo seleccionado, cambia a otro habilitado
+if (newState === false && id === brushGroupSelected) {
+  // busca algún grupo habilitado distinto
+  let nextId = null;
+  for (const [gid, g] of brushesGroup.entries()) {
+    if (gid !== id && g.isEnable) { nextId = gid; break; }
+  }
+  if (nextId != null) {
+    selectBrushGroup(nextId);
+  } else {
+    // si no queda ninguno habilitado, crea uno vacío y selecciónalo
+    const nid = getUnusedIdBrushGroup();
+    const bg = { isEnable: true, isActive: true, name: "Group " + (nid + 1), brushes: new Map() };
+    brushesGroup.set(nid, bg);
+    dataSelected.set(nid, []);
+    selectBrushGroup(nid);
+    newBrush();
+  }
+  drawBrushes();
+  updateStatus();
+  updateGroups();
+}
+
 };
 
 
@@ -852,7 +914,7 @@ if (!suppress) {
   };
 
   me.getBrushesGroupSize = function () {
-    return brushesGroup.length;
+    return brushesGroup.size;
   };
 
   me.removeBrushGroup = function (id) {
@@ -1156,9 +1218,10 @@ if (!suppress) {
   };
  
   //Fucntion to concat the actual referece curves with the news. 
-  function updateReferenceCurve(curve) {
+ function updateReferenceCurve(curve) {
   if (!curve) return;
-  if (curve.isVisible === undefined) curve.isVisible = true; 
+
+  if (curve.isVisible === undefined) curve.isVisible = true;
 
   if (!referenceCurves.some(ref => ref.id === curve.id)) {
     referenceCurves.push(curve);
@@ -1168,6 +1231,7 @@ if (!suppress) {
     BVH_.addReferenceCurves(BVHReferenceLines);
   }
 }
+
 
   
   me.suppressCallbacks = (on = true) => { suppress = !!on; };
