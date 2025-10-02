@@ -95,7 +95,7 @@ function TimeWidget(
   detailsMargin = detailsMargin || margin;
 
   let ts = {},
-    groupedData,  
+    groupedData,
     fData,
     overviewX,
     overviewY,
@@ -124,85 +124,90 @@ function TimeWidget(
     timelineOverview,
     brushes; // Stores the reference lines
   let gProbes;
-  let probes = new Map(); // id -> { id, refId, x, side, color }
-  let probeSeq = 0; 
-  const probePairs = new Map();  
-function getRefCurveById(refId) {
-  if (!Array.isArray(referenceCurves)) return null;
-  return referenceCurves.find(c => c.id === refId && c.isVisible !== false) || null;
-}
-
-
-function isGroupEnabled(groupId) {
-  // Evitar optional chaining para compatibilidad
-  let groups = null;
-  if (brushes && typeof brushes.getBrushesGroup === "function") {
-    groups = brushes.getBrushesGroup();
+  let sliders = new Map();
+  let sliderSeq = 0;
+  function getRefCurveById(refId) {
+    if (!Array.isArray(referenceCurves)) return null;
+    return (
+      referenceCurves.find((c) => c.id === refId && c.isVisible !== false) ||
+      null
+    );
   }
-  const g = groups && typeof groups.get === "function" ? groups.get(groupId) : null;
-  return !!(g && g.isEnable);
-}
 
-
-function isRefPolylineSelected() {
-  const gid = brushes.getBrushGroupSelected();
-  if (gid == null) return { ok: false };
-
-  const g = brushes.getBrushesGroup().get(gid);
-  if (!g) return { ok: false };
-
-  const name = (g.name || "").trim();
-  if (!name.startsWith("RC ")) return { ok: false };
-
-  // Heurística: el id de la curva suele ir tras "RC "
-  const refIdGuess = name.slice(3).trim();
-
-  // Intentos razonables de emparejar grupo ↔ curva
-  let ref =
-    (Array.isArray(referenceCurves) && (
-      referenceCurves.find(r => String(r.id).trim() === refIdGuess) ||
-      referenceCurves.find(r => String(r.id).trim() === name) ||
-      referenceCurves.find(r => String(r.name || "").trim() === refIdGuess)
-    )) || null;
-
-  if (!ref) return { ok: false };
-  if (ref.isSimplePoints) return { ok: false }; // solo polilínea
-
-  return { ok: true, groupId: gid, ref };
-}
-
-
-// util: delta de dominio equivalente a N píxeles (para bloquear cruces)
-function domainDxFromPixels(px = 6) {
-  // convierte 0px y px a dominio (soporta Date y número)
-  const d0 = +overviewX.invert(0);
-  const d1 = +overviewX.invert(px);
-  return Math.abs(d1 - d0) || 0;
-}
-
-// util: primera curva de referencia visible
-function getFirstVisibleRef() {
-  return Array.isArray(referenceCurves)
-    ? referenceCurves.find(c => c.isVisible !== false && !c.isSimplePoints)
-    : null;
-}
-// Interpolación lineal y clamp a extremos
-function getYAtX(curve, x) {
-  if (!curve || !Array.isArray(curve.data) || !curve.data.length) return null;
-  const data = curve.data;
-  let lo = 0, hi = data.length - 1;
-
-  if (x <= data[0][0])  return data[0][1];
-  if (x >= data[hi][0]) return data[hi][1];
-
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (data[mid][0] <= x) lo = mid; else hi = mid;
+  function isGroupEnabled(groupId) {
+    // Evitar optional chaining para compatibilidad
+    let groups = null;
+    if (brushes && typeof brushes.getBrushesGroup === "function") {
+      groups = brushes.getBrushesGroup();
+    }
+    const g =
+      groups && typeof groups.get === "function" ? groups.get(groupId) : null;
+    return !!(g && g.isEnable);
   }
-  const [x0,y0] = data[lo], [x1,y1] = data[hi];
-  const t = (x - x0) / (x1 - x0);
-  return y0*(1-t) + y1*t;
-}
+
+  function isRefPolylineSelected() {
+    const gid = brushes.getBrushGroupSelected();
+    if (gid == null) return { ok: false };
+
+    const g = brushes.getBrushesGroup().get(gid);
+    if (!g) return { ok: false };
+
+    const name = (g.name || "").trim();
+    if (!name.startsWith("RC ")) return { ok: false };
+
+    // Heurística: el id de la curva suele ir tras "RC "
+    const refIdGuess = name.slice(3).trim();
+
+    // Intentos razonables de emparejar grupo ↔ curva
+    let ref =
+      (Array.isArray(referenceCurves) &&
+        (referenceCurves.find((r) => String(r.id).trim() === refIdGuess) ||
+          referenceCurves.find((r) => String(r.id).trim() === name) ||
+          referenceCurves.find(
+            (r) => String(r.name || "").trim() === refIdGuess
+          ))) ||
+      null;
+
+    if (!ref) return { ok: false };
+    if (ref.isSimplePoints) return { ok: false }; // solo polilínea
+
+    return { ok: true, groupId: gid, ref };
+  }
+
+  // util: delta de dominio equivalente a N píxeles (para bloquear cruces)
+  function domainDxFromPixels(px = 6) {
+    // convierte 0px y px a dominio (soporta Date y número)
+    const d0 = +overviewX.invert(0);
+    const d1 = +overviewX.invert(px);
+    return Math.abs(d1 - d0) || 0;
+  }
+
+  // util: primera curva de referencia visible
+  function getFirstVisibleRef() {
+    return Array.isArray(referenceCurves)
+      ? referenceCurves.find((c) => c.isVisible !== false && !c.isSimplePoints)
+      : null;
+  }
+  // Interpolación lineal y clamp a extremos
+  function getYAtX(curve, x) {
+    if (!curve || !Array.isArray(curve.data) || !curve.data.length) return null;
+    const data = curve.data;
+    let lo = 0,
+      hi = data.length - 1;
+
+    if (x <= data[0][0]) return data[0][1];
+    if (x >= data[hi][0]) return data[hi][1];
+
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (data[mid][0] <= x) lo = mid;
+      else hi = mid;
+    }
+    const [x0, y0] = data[lo],
+      [x1, y1] = data[hi];
+    const t = (x - x0) / (x1 - x0);
+    return y0 * (1 - t) + y1 * t;
+  }
   // Exported Parameters
   ts.xPartitions = xPartitions;
   ts.yPartitions = yPartitions;
@@ -288,26 +293,6 @@ function getYAtX(curve, x) {
   selectedGroupData = new Set();
   showNonSelected = true;
 
-  function initBrushesControls() {
-    groupsElement.innerHTML = `<div style="flex-basis:100%;">
-    <div id="brushesList">
-    </div>
-    <button id="btnAddBrushGroup">Add Group</button>
-    </div>`;
-
-    groupsElement
-      .querySelector("button#btnAddBrushGroup")
-      .addEventListener("click", onAddBrushGroup);
-  
-
-    if (showBrushesControls) {
-      d3.select(groupsElement).insert("h3", ":first-child").text("Groups:");
-      divControls.appendChild(groupsElement);
-    }
-
-    
-  }
-
   function computeBrushColor(groupId) {
     return ts.brushesColorScale(groupId);
   }
@@ -319,236 +304,478 @@ function getYAtX(curve, x) {
   function onChangeNonSelected(newState) {
     showNonSelected = newState;
   }
+  function onEpsilonChange(rcId, newValue) {
+    const curve = referenceCurves.find((c) => c.id === rcId);
+    if (curve) {
+      curve.epsilon = newValue;
+
+      const bvh = brushes.getBvh();
+      if (bvh) {
+        bvh.removeReferenceCurves([rcId]);
+        ts.addReferenceCurve([curve]);
+      }
+    }
+  }
 
   function onChangeBrushGroupState(id, newState) {
     brushes.changeBrushGroupState(id, newState);
-    ts.printProbePairs();
+    updateDependentStates(id, newState);
+    brushes.recomputeSelection();
+    ts.printSliders();
     renderBrushesControls();
   }
-
   function onRemoveBrushGroup(id) {
     brushes.removeBrushGroup(id);
   }
 
   function onSelectBrushGroup(id) {
+    const oldSelectedId = brushes.getBrushGroupSelected();
     brushes.selectBrushGroup(id);
+    if (oldSelectedId !== undefined && oldSelectedId !== id) {
+      const oldGroup = brushes.getBrushesGroup().get(oldSelectedId);
+      if (oldGroup) {
+        updateDependentStates(oldSelectedId, oldGroup.isEnable);
+      }
+    }
+
+    updateDependentStates(id, true);
+
+    brushes.recomputeSelection();
   }
 
-  function renderBrushesControls() {
-    d3.select(groupsElement)
-      .select("#brushesList")
+  function initBrushesControls() {
+    groupsElement.innerHTML = `
+        <h3>Groups</h3>
+        <div id="brushesList" style="margin-bottom: 8px;"></div>
+        <button id="btnAddBrushGroup">Add Group</button>
+    `;
+    groupsElement
+      .querySelector("button#btnAddBrushGroup")
+      .addEventListener("click", onAddBrushGroup);
+
+    const rcWidgetElement = d3
+      .select(target)
+      .selectAll("#rcWidget")
+      .data([1])
+      .join("div")
+      .attr("id", "rcWidget")
+      .style("margin-top", "15px")
+      .node();
+
+    rcWidgetElement.innerHTML = `
+        <h3>Reference Curves</h3>
+        <div id="rcList"></div>
+    `;
+
+    if (showBrushesControls) {
+      divControls.appendChild(groupsElement);
+      divControls.appendChild(rcWidgetElement);
+    }
+  }
+
+  function renderGroupsWidget() {
+    const brushesList = d3.select(groupsElement).select("#brushesList");
+
+    const brushGroups = Array.from(brushes.getBrushesGroup()).filter(
+      ([id, group]) => !group.name.startsWith("RC ")
+    );
+
+    brushesList
       .selectAll(".brushControl")
-      .data(brushes.getBrushesGroup(), (d) => d[0])
+      .data(brushGroups, (d) => d[0])
       .join("div")
       .attr("class", "brushControl")
-      .each(function (d, i, n) {
-        let groupsSize = n.length;
-
+      .each(function (d) {
         const div = d3.select(this);
-        let groupName = d[1].name;
-        let groupCount = renderSelected.has(d[0])
+        const groupName = d[1].name;
+        const groupCount = renderSelected.has(d[0])
           ? renderSelected.get(d[0]).length
           : 0;
-        div.node().innerHTML = `<div style="
-            display: flex;
-            flex-wrap: nowrap;
-            align-items: center;
-          ">
+
+        div.node().innerHTML = `<div style="display: flex; align-items: center; flex-wrap: nowrap; margin-bottom: 2px;">
             <input type="checkbox" id="checkBoxShowBrushGroup" ${
               d[1].isEnable ? "checked" : ""
-            } ></input>
-            <div
-              id="groupColor"
-              style="
-              min-width: ${ts.brushGroupSize}px;
-              width: ${ts.brushGroupSize}px;
-              height: ${ts.brushGroupSize}px;
+            }></input>
+            <div id="groupColor" style="
+              min-width: ${ts.brushGroupSize}px; height: ${ts.brushGroupSize}px;
               background-color: ${computeBrushColor(d[0])};
-              border-width: ${
-                d[0] === brushes.getBrushGroupSelected() ? 2 : 0
-              }px;
-              border-color: black;
-              border-style: solid;
-              margin-right: 5px;
-              cursor: pointer;
+              border: ${
+                d[0] === brushes.getBrushGroupSelected()
+                  ? "2px solid black"
+                  : "1px solid #ccc"
+              };
+              margin: 0 5px; cursor: pointer;
             "></div>
-            <input
-              id="groupName"
-              style="margin-right: 5px; border: none;outline: none; width: ${
-                groupName.length
-              }ch;"
-              contenteditable="true"
-              value="${groupName}"></input>
-            <span id="groupSize" style="margin-right: 5px;">(${groupCount})</span>
-           <button style="color: red;font-weight: bold; border:none; background:none;
-            display:${
-              groupsSize > 1 ? "block" : "none"
+            <input id="groupName" style="border: none; outline: none; width: ${
+              groupName.length + 1
+            }ch;" value="${groupName}"></input>
+            <span id="groupSize" style="margin-right: 5px; cursor: pointer;">(${groupCount})</span>
+            <button style="color: red; font-weight: bold; border:none; background:none; display:${
+              brushes.getBrushesGroupSize() > 1 ? "block" : "none"
             }" id="btnRemoveBrushGroup">&cross;</button>
           </div>
         `;
 
-        div.select("input#groupName").on("input", function (evt) {
-          // Only update the name on change
-
-          // make the input fit the content
-          d3.select(this).style("width", evt.target.value.length + "ch");
+        div.select("input#groupName").on("input", function () {
+          this.style.width = this.value.length + 1 + "ch";
         });
         div.select("input#groupName").on("change", (evt) => {
-          // make the input fit the content
-          d3.select(this).style("width", evt.target.value.length + "ch");
           brushes.updateBrushGroupName(d[0], evt.target.value);
-          triggerValueUpdate();
         });
-        div.select("#btnRemoveBrushGroup").on("click", (event) => {
-          event.stopPropagation();
+        div.select("#btnRemoveBrushGroup").on("click", (e) => {
+          e.stopPropagation();
           onRemoveBrushGroup(d[0]);
         });
-        div.select("#checkBoxShowBrushGroup").on("click", (event) => {
-          //Prevent the event from reaching the element li
-          event.stopPropagation();
+        div.select("#checkBoxShowBrushGroup").on("change", (e) => {
+          onChangeBrushGroupState(d[0], e.target.checked);
         });
-        div.select("#checkBoxShowBrushGroup").on("change", (event) => {
-          event.stopPropagation();
-          onChangeBrushGroupState(d[0], event.target.checked);
-          console.log(
-            "Should change state of brushesGroup " + d[0],
-            event.target.checked
-          );
-        });
-
-        // Select only on the box and size
         div
-          .select("div#groupColor")
-          .on("click", () => onSelectBrushGroup(d[0]));
-        div
-          .select("span#groupSize")
+          .select("div#groupColor, span#groupSize")
           .on("click", () => onSelectBrushGroup(d[0]));
       });
 
-    // Render the nonSelected Group always on bottom of list
-    d3.select(groupsElement)
-      .select("#brushesList")
+    const nonSelectedContainer = d3
+      .select(groupsElement)
       .selectAll(".nonSelectedControl")
-      .remove();
-
-    d3.select(groupsElement)
-      .select("#brushesList")
+      .data([1]);
+    nonSelectedContainer
+      .enter()
       .append("div")
       .attr("class", "nonSelectedControl")
+      .merge(nonSelectedContainer)
       .each(function () {
-        const li = d3.select(this);
-        let groupName = "Non selected";
-        let groupCount = renderNotSelected.length;
-
-        li.node().innerHTML = `<div style="
-            display: flex;
-            flex-wrap: nowrap;
-            align-items: center;
-            margin-bottom: 5px;
-          ">
-            <input type="checkbox" id="checkBoxShowBrushGroup" ${
-              showNonSelected ? "checked" : ""
-            } ></input>
-            <output
-              style="margin-right: 0; border: none;outline: none; width: ${
-                groupName.length
-              }ch;"
-              >${groupName}</output>
-            <span id="groupSize" style="margin-right: 5px;">(${groupCount})</span>
-          </div>
-        `;
-
-        li.select("#checkBoxShowBrushGroup").on("change", (event) => {
-          event.stopPropagation();
-          onChangeNonSelected(event.target.checked);
-          onSelectionChange();
-        });
+        this.innerHTML = `<div style="display: flex; align-items: center; margin-top: 5px;">
+                <input type="checkbox" id="checkBoxShowNonSelected" ${
+                  showNonSelected ? "checked" : ""
+                }></input>
+                <span>Non selected (<span id="nonSelectedCount">${
+                  renderNotSelected.length
+                }</span>)</span>
+            </div>`;
+        d3.select(this)
+          .select("#checkBoxShowNonSelected")
+          .on("change", (e) => {
+            showNonSelected = e.target.checked;
+            onSelectionChange();
+          });
       });
-
-    // Render internal brush  controls
-    gGroupBrushes
-      .selectAll(".colorBrushes")
-      .data(brushes.getBrushesGroup(), (d) => d[0])
-      .join("rect")
-      .attr("class", "colorBrushes")
-      .attr("id", (d) => "colorBrush-" + d[0])
-      .attr("height", ts.brushGroupSize)
-      .attr("width", ts.brushGroupSize)
-      .attr(
-        "transform",
-        (d, i) => `translate(${90 + i * (ts.brushGroupSize + 5)}, -2)`
-      )
-      .style("stroke-width", (d) =>
-        d[0] === brushes.getBrushGroupSelected() ? 2 : 0
-      )
-      .style("stroke", "black")
-      .style("fill", (d) => computeBrushColor(d[0]))
-      .on("click", function () {
-        let id = d3.select(this).attr("id").substr("11");
-        onSelectBrushGroup(+id);
-      });
-
-      // --- CONTROLES DEL PAR DE PROBES (condicionales por grupo RC polilínea) ---
-d3.select(groupsElement).selectAll("#probePairControls").remove();
-const controls = d3.select(groupsElement)
-  .append("div")
-  .attr("id", "probePairControls")
-  .style("margin-top", "8px");
-
-const sel = isRefPolylineSelected();
-if (sel.ok && isGroupEnabled(sel.groupId)) {
-  const hasPair = probePairs.has(sel.groupId);
-
-  if (!hasPair) {
-    // Botón para crear el par (con ligera separación)
-    controls
-      .append("button")
-      .text("Add Pair (izq./dcha.)")
-      .on("click", () => {
-        ts.addProbePairForGroup({
-          groupId: sel.groupId,
-          gapPx: 24,
-          side: "above",
-        });
-      });
-  } else {
-    // Selector Above/Below
-    controls.append("label").text("Side: ").style("margin-right", "6px");
-    const sideSel = controls
-      .append("select")
-      .on("change", (e) => ts.setProbePairSide(sel.groupId, e.target.value));
-    sideSel
-      .selectAll("option")
-      .data(["above", "below"])
-      .join("option")
-      .attr("value", (d) => d)
-      .property("selected", (d) => d === probePairs.get(sel.groupId).side)
-      .text((d) => (d === "above" ? "Above (arriba)" : "Below (abajo)"));
-
-    // Botón eliminar par
-    controls
-      .append("button")
-      .style("margin-left", "8px")
-      .style("color", "crimson")
-      .text("Remove Pair")
-      .on("click", () => ts.removeProbePairForGroup(sel.groupId));
-  }
-} else {
-  // No mostrarmos nada si no es RC polilínea
-  controls.remove();
-}
-
+    d3.select(groupsElement)
+      .select("#nonSelectedCount")
+      .text(renderNotSelected.length);
   }
 
+  function renderReferenceCurvesWidget() {
+    const rcList = d3.select(target).select("#rcList");
+    if (!referenceCurves || referenceCurves.length === 0) {
+      rcList.html("");
+      return;
+    }
+
+    rcList
+      .selectAll(".rcControl")
+      .data(referenceCurves, (d) => d.id)
+      .join("div")
+      .attr("class", "rcControl")
+      .style("margin-bottom", "10px")
+      .each(function (rc) {
+        const div = d3.select(this);
+
+        const actionButtonHTML = rc.isSimplePoints
+          ? `<button class="add-association-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Association</button>`
+          : `<button class="add-slider-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Slider</button>`;
+
+        div.node().innerHTML = `
+            <div style="display: flex; align-items: center; font-weight: bold;">
+                <input type="checkbox" class="rc-visible-toggle" ${
+                  rc.isVisible !== false ? "checked" : ""
+                }></input>
+                <span>${rc.name || rc.id}</span>
+                ${actionButtonHTML} 
+            </div>
+            <div class="associations-list" style="margin-left: 20px; margin-top: 4px;"></div>
+            <div class="sliders-list" style="margin-left: 20px; margin-top: 4px;"></div>
+          `;
+
+        div.select(".rc-visible-toggle").on("change", (e) => {
+          rc.isVisible = e.target.checked;
+          ts.printReferenceCurves(referenceCurves);
+          ts.printSliders();
+          brushes.recomputeSelection();
+          renderBrushesControls();
+        });
+
+        div.select(".add-slider-btn").on("click", () => onAddSlider(rc.id));
+        div
+          .select(".add-association-btn")
+          .on("click", () => onUpdatePointCurveAssociation(rc.id, null, "add"));
+
+        // Render Sliders
+        const associatedSliders = Array.from(sliders.values()).filter(
+          (s) => s.rcId === rc.id
+        );
+        const slidersList = div.select(".sliders-list");
+        slidersList
+          .selectAll(".slider-control")
+          .data(associatedSliders, (d) => d.id)
+          .join("div")
+          .attr("class", "slider-control")
+          .each(function (slider) {
+            const group = brushes.getBrushesGroup().get(slider.groupId);
+            const groupName = group ? group.name : "...";
+
+            d3.select(this).node().innerHTML = `
+                  <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <span>Slider${slider.id} (${groupName})</span>
+                      <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
+                        slider.groupId
+                      )}; margin: 0 5px; border: 1px solid #ccc;"></div>
+                      <button class="toggle-side-btn" title="Toggle position (above/below)" style="border: none; background: none; cursor: pointer; font-size: 1.1em; padding: 0 5px;">
+                          ${slider.side === "above" ? "↓" : "↑"}
+                      </button>
+                      <input type="checkbox" class="slider-enabled-toggle" title="Enable/Disable Slider" ${
+                        slider.userEnabled ? "checked" : ""
+                      }></input>
+                      <button class="remove-slider-btn" title="Remove Slider" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
+                  </div>
+                `;
+
+            d3.select(this)
+              .select(".toggle-side-btn")
+              .on("click", () => {
+                slider.side = slider.side === "above" ? "below" : "above";
+                ts.printSliders();
+                brushes.recomputeSelection();
+                renderReferenceCurvesWidget();
+              });
+            d3.select(this)
+              .select(".slider-enabled-toggle")
+              .on("change", (e) => onToggleSlider(slider.id, e.target.checked));
+            d3.select(this)
+              .select(".remove-slider-btn")
+              .on("click", () => onRemoveSlider(slider.id));
+          });
+
+        // Render Point Associations
+        const pointAssociations =
+          rc.isSimplePoints && Array.isArray(rc.associations)
+            ? rc.associations
+            : [];
+        const associationsList = div.select(".associations-list");
+        associationsList
+          .selectAll(".association-control")
+          .data(pointAssociations, (d) => d.id)
+          .join("div")
+          .attr("class", "association-control")
+          .style("display", rc.isVisible !== false ? "block" : "none")
+          .each(function (assoc) {
+            if (assoc.userEnabled === undefined) {
+              assoc.userEnabled = assoc.enabled;
+            }
+            const group = brushes.getBrushesGroup().get(assoc.id);
+            const groupName = group ? group.name : "...";
+
+            d3.select(this).node().innerHTML = `
+                  <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <span>Association (${groupName})</span>
+                      <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
+                        assoc.id
+                      )}; margin: 0 5px; border: 1px solid #ccc;"></div>
+                      <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
+                        assoc.userEnabled ? "checked" : ""
+                      }></input>
+                      <button class="remove-assoc-btn" title="Remove Association" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
+                  </div>
+                `;
+
+            d3.select(this)
+              .select(".assoc-enabled-toggle")
+              .on("change", (e) => {
+                onUpdatePointCurveAssociation(
+                  rc.id,
+                  assoc.id,
+                  "toggle",
+                  e.target.checked
+                );
+              });
+            d3.select(this)
+              .select(".remove-assoc-btn")
+              .on("click", () => {
+                onUpdatePointCurveAssociation(rc.id, assoc.id, "remove");
+              });
+          });
+
+        if (rc.isSimplePoints) {
+          const epsilonControl = div
+            .selectAll(".epsilon-control")
+            .data([rc])
+            .join("div")
+            .attr("class", "epsilon-control")
+            .style("margin-left", "20px")
+            .style("font-size", "0.9em")
+            .style("margin-bottom", "5px")
+            .style("display", rc.isVisible !== false ? "flex" : "none")
+            .style("align-items", "center").html(`
+            <label style="margin-right: 5px;">Collision Tolerance:</label>
+            <input type="number" class="epsilon-input"
+                   value="${rc.epsilon}" min="0" step="0.1"
+                   style="width: 5ch;">
+        `);
+
+          const epsilonInput = epsilonControl.select(".epsilon-input");
+
+          epsilonInput.on("change", (event) => {
+            const newValue = +event.target.value;
+            if (!isNaN(newValue) && newValue >= 0) {
+              onEpsilonChange(rc.id, newValue);
+            }
+          });
+
+          epsilonInput.on("input", function () {
+            this.style.width = Math.max(5, this.value.length + 2) + "ch";
+          });
+          epsilonInput.dispatch("input");
+        }
+      });
+  }
+
+  function onUpdatePointCurveAssociation(rcId, groupId, action, newState) {
+    const ref = referenceCurves.find((c) => c.id === rcId);
+    if (!ref) return;
+
+    if (!Array.isArray(ref.associations)) {
+      ref.associations = [];
+    }
+
+    if (action === "add") {
+      const selectedGroupId = brushes.getBrushGroupSelected();
+      if (selectedGroupId === undefined || selectedGroupId === null) {
+        alert("Please select a Group before adding an association.");
+        return;
+      }
+      if (!ref.associations.some((a) => a.id === selectedGroupId)) {
+        ref.associations.push({
+          id: selectedGroupId,
+          enabled: true,
+          userEnabled: true,
+        });
+      }
+    } else if (action === "remove" && groupId !== null) {
+      ref.associations = ref.associations.filter((a) => a.id !== groupId);
+    } else if (action === "toggle" && groupId !== null) {
+      const assoc = ref.associations.find((a) => a.id === groupId);
+      if (assoc) {
+        assoc.userEnabled = newState;
+        const group = brushes.getBrushesGroup().get(assoc.id);
+        const groupIsEnabled = group ? group.isEnable : false;
+        assoc.enabled = groupIsEnabled && assoc.userEnabled;
+      }
+    }
+    brushes.updateReferenceCurves(referenceCurves);
+    brushes.recomputeSelection();
+    renderReferenceCurvesWidget();
+  }
+  function renderBrushesControls() {
+    renderGroupsWidget();
+    renderReferenceCurvesWidget();
+  }
+  function updateDependentStates(groupId, groupIsEnabled) {
+    for (const slider of sliders.values()) {
+      if (slider.groupId === groupId) {
+        slider.enabled = groupIsEnabled && slider.userEnabled;
+      }
+    }
+
+    (referenceCurves || []).forEach((curve) => {
+      if (curve.isSimplePoints && Array.isArray(curve.associations)) {
+        const assoc = curve.associations.find((a) => a.id === groupId);
+        if (assoc) {
+          assoc.enabled = groupIsEnabled && assoc.userEnabled;
+        }
+      }
+    });
+
+    brushes.updateReferenceCurves(referenceCurves);
+  }
+  function onAddSlider(rcId) {
+    const ref = getRefCurveById(rcId);
+    if (!ref || !ref.data || ref.data.length < 2 || ref.isSimplePoints) {
+      console.warn(
+        "Cannot add slider to this reference curve (no data, not a polyline, or not found)."
+      );
+      alert(
+        "Cannot add slider to this reference curve. It might not be a polyline or has no data."
+      );
+      return;
+    }
+
+    const groupId = brushes.getBrushGroupSelected();
+    if (groupId === undefined || groupId === null) {
+      alert("Please select a Group before adding a slider.");
+      return;
+    }
+
+    const curveDomain = d3.extent(ref.data, (d) => d[0]);
+    const domainStart =
+      curveDomain[0] instanceof Date
+        ? curveDomain[0].getTime()
+        : curveDomain[0];
+    const domainEnd =
+      curveDomain[1] instanceof Date
+        ? curveDomain[1].getTime()
+        : curveDomain[1];
+    const domainWidth = domainEnd - domainStart;
+
+    let leftX = domainStart + domainWidth * 0.25;
+    let rightX = domainStart + domainWidth * 0.75;
+
+    if (curveDomain[0] instanceof Date) {
+      leftX = new Date(leftX);
+      rightX = new Date(rightX);
+    }
+
+    const sliderId = ++sliderSeq;
+    sliders.set(sliderId, {
+      id: sliderId,
+      rcId: rcId,
+      groupId: groupId,
+      side: "above",
+      enabled: true,
+      userEnabled: true,
+      leftX: leftX,
+      rightX: rightX,
+    });
+
+    brushes.recomputeSelection();
+    ts.printSliders();
+    renderReferenceCurvesWidget();
+  }
+
+  function onRemoveSlider(sliderId) {
+    sliders.delete(sliderId);
+    brushes.recomputeSelection();
+    ts.printSliders();
+    renderReferenceCurvesWidget();
+  }
+
+  function onToggleSlider(sliderId, isEnabled) {
+    if (sliders.has(sliderId)) {
+      const slider = sliders.get(sliderId);
+      slider.userEnabled = isEnabled;
+      const group = brushes.getBrushesGroup().get(slider.groupId);
+      const groupIsEnabled = group ? group.isEnable : false;
+      slider.enabled = groupIsEnabled && slider.userEnabled;
+      brushes.recomputeSelection();
+      ts.printSliders();
+    }
+  }
   function initDomains({ xDataType, fData }) {
     if (!xDomain) {
-      xDomain = fixAxis && _this ? _this.extent.x : d3.extent(fData, x); // Keep same axes as in the first rendering
+      xDomain = fixAxis && _this ? _this.extent.x : d3.extent(fData, x);
     }
 
     overviewX = xScale ? xScale.copy() : undefined;
 
     if (xDataType === "object" && x(fData[0]) instanceof Date) {
-      // X is Date
       hasScaleTime = true;
       if (!overviewX) overviewX = d3.scaleTime();
       overviewX.domain(xDomain);
@@ -746,9 +973,8 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       .attr("class", "gReferences")
       .style("pointer-events", "none");
 
-
-      gmainY
-      .selectAll("g.tick")  
+    gmainY
+      .selectAll("g.tick")
       .selectAll(".gridline")
       .data(ts.showGrid ? [1] : [])
       .join("line")
@@ -797,16 +1023,20 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       .join("g")
       .attr("id", "brushes");
 
-      gProbes = g
-  .selectAll("g.gProbes")
-  .data([1])
-  .join("g")
-  .attr("class", "gProbes");
+    gProbes = g
+      .selectAll("g.gProbes")
+      .data([1])
+      .join("g")
+      .attr("class", "gProbes");
 
     //Before create the brushes structure, we generete the reerence lines points.
-    //THIS IS ONLY TO GENERATE POINTS FOR THE FUNCTIONS 
+    //THIS IS ONLY TO GENERATE POINTS FOR THE FUNCTIONS
     if (referenceCurves) {
-      referenceCurves = generateCurvePoints(referenceCurves, overviewX.domain(), overviewY.domain());
+      referenceCurves = generateCurvePoints(
+        referenceCurves,
+        overviewX.domain(),
+        overviewY.domain()
+      );
     }
 
     brushes = brushInteraction({
@@ -827,14 +1057,21 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       scaleX: overviewX,
       scaleY: overviewY,
       updateTime: 150,
-      extent: [[0,0],[width - margin.left - margin.right, height - margin.top - margin.bottom],],
+      extent: [
+        [0, 0],
+        [
+          width - margin.left - margin.right,
+          height - margin.top - margin.bottom,
+        ],
+      ],
       selectionCallback: onSelectionChange,
       groupsCallback: onBrushGroupsChange,
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
       referenceCurves: referenceCurves,
-      getProbePairBoxes: () => ts.getProbePairBoxesPixels(),
+      getProbePairBoxes: () => ts.getActiveSliderBoxes(), // <-- Ya hiciste este cambio
+      getSliders: () => sliders,
+      getYAtX: getYAtX,
     });
-    
 
     gGroupBrushes
       .selectAll("text")
@@ -852,7 +1089,6 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
 
     return g;
   }
-
 
   // Callback that is called every time the coordinates of the selected brush are modified.
   function onBrushCoordinatesChange(selection) {
@@ -1239,8 +1475,11 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
   }
 
   // To render the overview and detailed view based on the selectedData
+  // En TimeWidget.js
+  // En TimeWidget.js
+
   function render(dataSelected, dataNotSelected, hasSelection) {
-    // Prepare the medians array to print ( only the enable groups)
+    // Preparamos las medianas (solo de grupos activos)
     let medians = [];
     let enableBrushGroups = brushes.getEnableGroups();
     enableBrushGroups.forEach((id) => {
@@ -1249,19 +1488,33 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       }
     });
 
-    // Decide which elements are painted as selected or not, depending on the enable groups.
+    const isGroupWithPointAssociation = (groupId) => {
+      const hasPointAssoc = (referenceCurves || []).some(
+        (rc) =>
+          rc.isSimplePoints &&
+          Array.isArray(rc.associations) &&
+          rc.associations.some((assoc) => assoc.id === groupId && assoc.enabled)
+      );
+
+      const hasActiveSlider = Array.from(sliders.values()).some(
+        (s) => s.groupId === groupId && s.enabled
+      );
+
+      return hasPointAssoc || hasActiveSlider;
+    };
+
     let mDataSelected = new Map();
     let mDataNotSelected = new Set(dataNotSelected);
-    dataSelected.forEach((g, i) => {
-      if (enableBrushGroups.has(i)) {
-        mDataSelected.set(i, g);
+
+    dataSelected.forEach((groupData, groupId) => {
+      const group = brushes.getBrushesGroup().get(groupId);
+      if ((group && group.isEnable) || isGroupWithPointAssociation(groupId)) {
+        mDataSelected.set(groupId, groupData);
       } else {
-        g.forEach((d) => mDataNotSelected.add(d));
+        groupData.forEach((d) => mDataNotSelected.add(d));
       }
     });
 
-
-    // Delete the notSelected elements that are selected.
     mDataSelected.forEach((arr) => {
       for (const item of arr) mDataNotSelected.delete(item);
     });
@@ -1280,13 +1533,11 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
       window.requestAnimationFrame(() =>
         timelineDetails.render({ data: dataSelected, brushGroupSelected })
       );
-      // window.requestAnimationFrame(() => renderDetailsCanvas(dataSelected));
     }
   }
 
   function getBrushGroupsMedians(data) {
     if (!brushes.hasSelection()) return;
-    // TODO use d3.bin()
     let minX = +overviewX.domain()[0];
     let maxX = +overviewX.domain()[1];
 
@@ -1335,387 +1586,190 @@ if (sel.ok && isGroupEnabled(sel.groupId)) {
 
     // log(" Bins computed", medianBrushGroups);
   }
-// === API pública de Probes + pintado ===
-ts.addProbe = function ({ refId, x, side = "above", color = null } = {}) {
-  if (!refId) {
-    const first = Array.isArray(referenceCurves)
-      ? referenceCurves.find(c => c.isVisible !== false)
-      : null;
-    if (!first) { console.warn("addProbe: no hay curvas de referencia visibles"); return null; }
-    refId = first.id;
-  }
-  const ref = getRefCurveById(refId);
-  if (!ref || !ref.data || !ref.data.length) return null;
 
-  if (x === undefined || x === null) {
-    const [dx0, dx1] = overviewX.domain();
-    x = (+(dx0) + +(dx1)) / 2;
-    if (dx0 instanceof Date) x = new Date(x);
-  }
+  ts.printSliders = function () {
+    if (!overviewX || !overviewY || !gProbes) return;
 
-  const minCx = ref.data[0][0];
-  const maxCx = ref.data[ref.data.length - 1][0];
-  const xNum = +x; // Date o number → number para comparar
-  x = Math.max(+minCx, Math.min(+maxCx, xNum));
-  if (minCx instanceof Date) x = new Date(x);
-
-  const id = ++probeSeq;
-  const c  = color || ref.color || "#333";
-  probes.set(id, { id, refId, x, side, color: c });
-  ts.printProbes();
-  return id;
-};
-
-ts.moveProbe = function (id, x) {
-  const p = probes.get(id);
-  if (!p) return;
-  const ref = getRefCurveById(p.refId);
-  if (!ref || !ref.data || !ref.data.length) return;
-  const minCx = +ref.data[0][0];
-  const maxCx = +ref.data[ref.data.length - 1][0];
-  const xNum  = +x;
-  p.x = Math.max(minCx, Math.min(maxCx, xNum));
-  if (ref.data[0][0] instanceof Date) p.x = new Date(p.x);
-  ts.printProbes();
-};
-
-ts.removeProbe = function (id) {
-  probes.delete(id);
-  ts.printProbes();
-};
-
-ts.printProbes = function () {
-  if (!overviewX || !overviewY) return;
-
-  const data = Array.from(probes.values()).filter(p => !!getRefCurveById(p.refId));
-
-  const sel = gProbes
-    .selectAll("g.probe")
-    .data(data, d => d.id);
-
-  sel.exit().remove();
-
-  const enter = sel.enter()
-    .append("g")
-    .attr("class", "probe")
-    .style("cursor", "ew-resize");
-
-  enter.append("line").attr("class", "probe-line");
-  enter.append("text")
-    .attr("class", "probe-label")
-    .style("font-family", "sans-serif")
-    .style("font-size", "10px")
-    .style("paint-order", "stroke")
-    .style("stroke", "#fff")
-    .style("stroke-width", 3)
-    .style("stroke-opacity", 0.8);
-
-  const drag = d3.drag()
-    .on("drag", (event, d) => {
-      const [mx] = d3.pointer(event, gProbes.node());
-      let xDom = overviewX.invert(mx);
-      const ref = getRefCurveById(d.refId);
-      if (!ref) return;
-      const minCx = +ref.data[0][0];
-      const maxCx = +ref.data[ref.data.length - 1][0];
-      xDom = Math.max(minCx, Math.min(maxCx, +xDom));
-      d.x = (ref.data[0][0] instanceof Date) ? new Date(xDom) : xDom;
-      ts.printProbes();
+    // Filtra sliders que están activos y cuya curva de referencia es visible y es una polilínea
+    const sliderData = Array.from(sliders.values()).filter((s) => {
+      if (!s.enabled) return false;
+      const ref = getRefCurveById(s.rcId);
+      return ref && ref.isVisible !== false && !ref.isSimplePoints;
     });
 
-  enter.call(drag)
-    .on("dblclick", (e, d) => { d.side = d.side === "above" ? "below" : "above"; ts.printProbes(); })
-    .on("contextmenu", (e, d) => { e.preventDefault(); ts.removeProbe(d.id); });
+    const sel = gProbes
+      .selectAll("g.slider-group")
+      .data(sliderData, (d) => d.id);
+    sel.exit().remove();
 
-  const all = enter.merge(sel);
+    const enter = sel.enter().append("g").attr("class", "slider-group");
 
-  all.each(function (d) {
-    const ref = getRefCurveById(d.refId);
-    if (!ref) return;
+    enter.append("path").attr("class", "slider-background");
 
-    const yCurve = getYAtX(ref, +d.x);
-    if (yCurve == null) return;
+    ["left", "right"].forEach((which) => {
+      const gSide = enter.append("g").attr("class", `handle-${which}`);
+      gSide.append("line").attr("class", "slider-line");
+      gSide
+        .append("line")
+        .attr("class", "slider-hit-area")
+        .style("stroke", "transparent")
+        .style("stroke-width", 12)
+        .style("cursor", "ew-resize");
+      gSide
+        .append("title")
+        .text("Drag to move. Double-click to toggle side (above/below).");
+    });
 
-    const xPx      = overviewX(d.x);
-    const yCurvePx = overviewY(yCurve);
-    const [yMin, yMax] = overviewY.domain();
-    const yEndPx   = (d.side === "above") ? overviewY(yMax) : overviewY(yMin);
+    const all = enter.merge(sel);
 
-    d3.select(this).select("line.probe-line")
-      .attr("x1", xPx).attr("x2", xPx)
-      .attr("y1", yCurvePx).attr("y2", yEndPx)
-      .attr("stroke", d.color).attr("stroke-width", 2).attr("opacity", 0.9);
+    all.each(function (slider) {
+      const gSlider = d3.select(this);
+      const ref = getRefCurveById(slider.rcId);
+      if (!ref) return;
 
-    const label = `${fmtX ? fmtX(d.x) : d.x} · ${fmtY ? fmtY(yCurve) : yCurve}`;
-    const lbl = d3.select(this).select("text.probe-label")
-      .text(label).attr("x", xPx + 6).attr("fill", d.color);
+      const groupColor = computeBrushColor(slider.groupId);
+      const minGap = domainDxFromPixels(5);
+      const updateSliderPosition = (which, newX) => {
+        const xDom = overviewX.invert(newX);
+        const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
+        let clampedX = Math.max(minRefX, Math.min(maxRefX, +xDom));
+        const isDate = ref.data[0][0] instanceof Date;
 
-    if (d.side === "above") {
-      lbl.attr("y", yEndPx + 12).attr("text-anchor", "start");
-    } else {
-      lbl.attr("y", yCurvePx - 6).attr("text-anchor", "start");
-    }
-  });
-};
+        if (which === "left") {
+          const newLeftX = Math.min(clampedX, +slider.rightX - minGap);
+          slider.leftX = isDate ? new Date(newLeftX) : newLeftX;
+        } else {
+          const newRightX = Math.max(clampedX, +slider.leftX + minGap);
+          slider.rightX = isDate ? new Date(newRightX) : newRightX;
+        }
+        ts.printSliders();
+        brushes.recomputeSelection();
+      };
 
+      const drawHandle = (which) => {
+        const xDom = which === "left" ? slider.leftX : slider.rightX;
+        const xPx = overviewX(xDom);
+        const yCurve = getYAtX(ref, +xDom);
+        if (yCurve === null) return;
 
+        const yCurvePx = overviewY(yCurve);
+        const [yMin, yMax] = overviewY.domain();
+        const yEndPx =
+          slider.side === "above" ? overviewY(yMax) : overviewY(yMin);
 
-ts.addProbePairForGroup = function ({
-  groupId = brushes.getBrushGroupSelected(),
-  refId,
-  side = "above",
-  gapPx = 24,                 // separación inicial visual
-  colorLeft = "#ff7f0e",
-  colorRight = "#1f77b4",
-} = {}) {
-  // Sólo si el seleccionado es RC polilínea
-  const sel = isRefPolylineSelected();
-  if (!sel.ok) {
-    console.warn("No RC polilínea seleccionada; no se crea el par.");
-    return;
-  }
-  groupId = sel.groupId;
-  const ref = refId ? referenceCurves.find(c => c.id === refId) : sel.ref;
-  if (!ref || !ref.data || !ref.data.length) return;
+        const gHandle = gSlider.select(`.handle-${which}`);
+        gHandle
+          .select(".slider-line")
+          .attr("x1", xPx)
+          .attr("y1", yCurvePx)
+          .attr("x2", xPx)
+          .attr("y2", yEndPx)
+          .attr("stroke", groupColor)
+          .attr("stroke-width", 2);
 
-  // centro del dominio X visible (Date o Number)
-  const [dx0, dx1] = overviewX.domain();
-  const centerNum = (+dx0 + +dx1) / 2;
-  const centerX = (dx0 instanceof Date) ? new Date(centerNum) : centerNum;
+        gHandle
+          .select(".slider-hit-area")
+          .attr("x1", xPx)
+          .attr("y1", yCurvePx)
+          .attr("x2", xPx)
+          .attr("y2", yEndPx)
+          .call(d3.drag().on("drag", (e) => updateSliderPosition(which, e.x)))
+          .on("dblclick", (e) => {
+            e.preventDefault(); // Evita efectos no deseados como la selección de texto
+            slider.side = slider.side === "above" ? "below" : "above";
+            ts.printSliders(); // Vuelve a dibujar el slider en su nueva posición
+            brushes.recomputeSelection(); // El área de selección ha cambiado, hay que recalcular
+          });
+      };
 
-  // separación en píxeles → dominio
-  const cxPx = overviewX(centerX);
-  const leftPx  = cxPx - gapPx/2;
-  const rightPx = cxPx + gapPx/2;
-  let L = overviewX.invert(leftPx);
-  let R = overviewX.invert(rightPx);
+      drawHandle("left");
+      drawHandle("right");
 
-  // clamp al dominio de la curva de referencia
-  const minCx = +ref.data[0][0];
-  const maxCx = +ref.data[ref.data.length - 1][0];
-  L = Math.max(minCx, Math.min(maxCx, +L));
-  R = Math.max(minCx, Math.min(maxCx, +R));
-  if (L > R) [L, R] = [R, L];
-  if (ref.data[0][0] instanceof Date) { L = new Date(L); R = new Date(R); }
+      const xStart = +slider.leftX;
+      const xEnd = +slider.rightX;
 
-  probePairs.set(groupId, {
-    groupId, refId: ref.id, side,
-    leftX: L, rightX: R,
-    colorLeft, colorRight,
-    minGapPx: 0   
-  });
+      const curveSegment = ref.data.filter(
+        (d) => +d[0] >= xStart && +d[0] <= xEnd
+      );
 
-  ts.printProbePairs();
-  brushes.recomputeSelection(); 
-  renderBrushesControls();   
-};
-
-
-ts.moveProbeOfPair = function (groupId, which, xDom) {
-  const p = probePairs.get(groupId);
-  if (!p) return;
-  const ref = referenceCurves.find(c => c.id === p.refId);
-  if (!ref || !ref.data || !ref.data.length) return;
-
-  const minCx = +ref.data[0][0];
-  const maxCx = +ref.data[ref.data.length - 1][0];
-
-  let x = Math.max(minCx, Math.min(maxCx, +xDom));
-
-  // Gap mínimo en píxeles → dominio (0 por defecto = se pueden tocar)
-  const px = (typeof p.minGapPx === "number") ? p.minGapPx : 0;
-  const gap = domainDxFromPixels(px);
-
-  if (which === "left") {
-    // Permite igualdad: left <= right - gap  → si gap=0, left <= right
-    const maxLeft = Math.min(+p.rightX - gap, maxCx);
-    x = Math.min(x, maxLeft);
-    if (x > +p.rightX - gap) x = +p.rightX - gap; // clamp final seguro
-    p.leftX = (ref.data[0][0] instanceof Date) ? new Date(x) : x;
-  } else { // right
-    const minRight = Math.max(+p.leftX + gap, minCx);
-    x = Math.max(x, minRight);
-    if (x < +p.leftX + gap) x = +p.leftX + gap;
-    p.rightX = (ref.data[0][0] instanceof Date) ? new Date(x) : x;
-  }
-  ts.printProbePairs();
-  brushes.recomputeSelection();
-};
-
-
-ts.removeProbePairForGroup = function (groupId) {
-  probePairs.delete(groupId);
-  ts.printProbePairs();
-  brushes.recomputeSelection();
-  renderBrushesControls(); 
-};
-
-ts.setProbePairSide = function (groupId, side) {
-  const p = probePairs.get(groupId);
-  if (!p) return;
-  p.side = (side === "below") ? "below" : "above";
-  ts.printProbePairs();
-  brushes.recomputeSelection();
-  renderBrushesControls(); 
-};
-
-ts.toggleProbePairSide = function (groupId) {
-  const p = probePairs.get(groupId);
-  if (!p) return;
-  p.side = (p.side === "above") ? "below" : "above";
-  ts.printProbePairs();
-  brushes.recomputeSelection();
-  renderBrushesControls(); 
-};
-
-ts.printProbePairs = function () {
-  if (!overviewX || !overviewY) return;
-
-  const data = Array.from(probePairs.values()).filter(p => {
-  if (!isGroupEnabled(p.groupId)) return false;              // grupo oculto → no pintar
-  const ref = Array.isArray(referenceCurves)
-    ? referenceCurves.find((c) => c.id === p.refId)
-    : null;
-  if (!ref) return false;
-  if (ref.isSimplePoints) return false;                      // sólo polilínea
-  if (ref.isVisible === false) return false;                 // referencia oculta
-  return true;
-});
-
-  const sel = gProbes
-    .selectAll("g.probePair")
-    .data(data, d => d.groupId);
-
-  sel.exit().remove();
-
-  const enter = sel.enter()
-    .append("g")
-    .attr("class", "probePair");
-
-  // crea subgrupos left/right con línea visible + hit-area + etiqueta + title
-  ["left","right"].forEach(which => {
-    const gSide = enter.append("g").attr("class", `probe-${which}`);
-    gSide.append("line").attr("class", "probe-line");
-    gSide.append("line")
-      .attr("class", "probe-hit")
-      .style("stroke", "transparent")
-      .style("stroke-width", 12)
-      .style("cursor", "ew-resize");
-    gSide.append("text")
-      .attr("class", "probe-label")
-      .style("font-family", "sans-serif")
-      .style("font-size", "10px")
-      .style("paint-order", "stroke")
-      .style("stroke", "#fff")
-      .style("stroke-width", 3)
-      .style("stroke-opacity", 0.8);
-    gSide.append("title")
-      .text("Arrastra para mover · Doble clic: arriba/abajo · Click derecho: borrar par");
-  });
-
-  const all = enter.merge(sel);
-
-  const dragSide = (which) => d3.drag().on("drag", (event, d) => {
-    const [mx] = d3.pointer(event, gProbes.node());
-    const xDom = overviewX.invert(mx);
-    ts.moveProbeOfPair(d.groupId, which, xDom);
-  });
-
-  const wireEvents = (which, g) => {
-    g.call(dragSide(which))
-     .on("dblclick", (e, d) => ts.toggleProbePairSide(d.groupId))
-     .on("contextmenu", (e, d) => { e.preventDefault(); ts.removeProbePairForGroup(d.groupId); });
-  };
-
-  all.each(function (d) {
-    const ref = referenceCurves.find(c => c.id === d.refId);
-    if (!ref) return;
-
-    const paint = (which, xDom, color) => {
-      // usa tu getYAtX(curve,x) si ya la tienes definida
-      const yC = getYAtX(ref, +xDom);
-      const xPx = overviewX(xDom);
-      const yCurvePx = overviewY(yC);
-      const [yMin, yMax] = overviewY.domain();
-      const yEndPx = (d.side === "above") ? overviewY(yMax) : overviewY(yMin);
-
-      const gSide = d3.select(this).select(`g.probe-${which}`);
-
-      gSide.select("line.probe-line")
-        .attr("x1", xPx).attr("x2", xPx)
-        .attr("y1", yCurvePx).attr("y2", yEndPx)
-        .attr("stroke", color).attr("stroke-width", 2).attr("opacity", 0.95);
-
-      gSide.select("line.probe-hit")
-        .attr("x1", xPx).attr("x2", xPx)
-        .attr("y1", yCurvePx).attr("y2", yEndPx);
-
-      const label = `${fmtX ? fmtX(xDom) : xDom} · ${fmtY ? fmtY(yC) : yC}`;
-      const lbl = gSide.select("text.probe-label")
-        .text(label)
-        .attr("x", xPx + 6)
-        .attr("fill", color);
-
-      if (d.side === "above") {
-        lbl.attr("y", yEndPx + 12).attr("text-anchor", "start");
-      } else {
-        lbl.attr("y", yCurvePx - 6).attr("text-anchor", "start");
+      const startPoint = [xStart, getYAtX(ref, xStart)];
+      const endPoint = [xEnd, getYAtX(ref, xEnd)];
+      if (curveSegment.length === 0 || +curveSegment[0][0] > xStart) {
+        curveSegment.unshift(startPoint);
+      }
+      if (
+        curveSegment.length === 0 ||
+        +curveSegment[curveSegment.length - 1][0] < xEnd
+      ) {
+        curveSegment.push(endPoint);
       }
 
-      wireEvents(which, gSide);
-    };
+      const lineGenerator = d3
+        .line()
+        .x((d) => overviewX(d[0]))
+        .y((d) => overviewY(d[1]));
 
-    paint.call(this, "left",  d.leftX,  d.colorLeft);
-    paint.call(this, "right", d.rightX, d.colorRight);
-  });
-};
+      const curvePathData = lineGenerator(curveSegment);
 
-ts.getProbePairBoxesPixels = function () {
-  if (!overviewX || !overviewY) return [];
-  const out = [];
+      const [yMin, yMax] = overviewY.domain();
+      const topPx = overviewY(yMax);
+      const bottomPx = overviewY(yMin);
+      const x0p = overviewX(slider.leftX);
+      const x1p = overviewX(slider.rightX);
 
-  // top/bottom en píxeles
-  const [yMin, yMax] = overviewY.domain();
-  const topPx    = overviewY(yMax);
-  const bottomPx = overviewY(yMin);
+      let pathString;
+      if (slider.side === "above") {
+        pathString = `M ${x0p},${topPx} L ${x0p},${overviewY(
+          startPoint[1]
+        )} ${curvePathData.slice(1)} L ${x1p},${topPx} Z`;
+      } else {
+        pathString = `M ${x0p},${overviewY(
+          startPoint[1]
+        )} ${curvePathData.slice(
+          1
+        )} L ${x1p},${bottomPx} L ${x0p},${bottomPx} Z`;
+      }
 
-  for (const [groupId, p] of probePairs.entries()) {
-    // sólo si el grupo está habilitado y la curva existe/visible y es polilínea
-    if (!isGroupEnabled(groupId)) continue;
-    const ref = Array.isArray(referenceCurves)
-      ? referenceCurves.find(c => c.id === p.refId && c.isVisible !== false && !c.isSimplePoints)
-      : null;
-    if (!ref || !Array.isArray(ref.data) || !ref.data.length) continue;
+      gSlider
+        .select(".slider-background")
+        .attr("d", pathString)
+        .attr("fill", groupColor)
+        .attr("opacity", 0.15)
+        .style("pointer-events", "none");
+    });
+  };
 
-    // X en dominio → píxel
-    const L = +p.leftX, R = +p.rightX;
-    let x0p = overviewX(Math.min(L, R));
-    let x1p = overviewX(Math.max(L, R));
+  ts.getActiveSliderBoxes = function () {
+    if (!overviewX || !overviewY) return [];
+    const out = [];
 
-    // Y de la curva en los extremos de la pareja (interpolado)
-    const yLeftPx  = overviewY(getYAtX(ref, L));
-    const yRightPx = overviewY(getYAtX(ref, R));
+    const activeSliders = Array.from(sliders.values()).filter((s) => s.enabled);
 
-    // Construimos el rectángulo vertical: [ [x0,y0], [x1,y1] ] con y ascendente en píxeles
-    let y0p, y1p;
-    if (p.side === "above") {
-      y0p = Math.min(topPx, bottomPx);           // arriba
-      y1p = Math.max(yLeftPx, yRightPx);         // hasta el más "bajo" de los extremos en píxel
-    } else {
-      y0p = Math.min(yLeftPx, yRightPx);         // parte superior del rectángulo (por encima del extremo más alto)
-      y1p = Math.max(topPx, bottomPx);           // abajo
+    for (const slider of activeSliders) {
+      const ref = getRefCurveById(slider.rcId);
+      if (!ref || ref.isVisible === false) continue;
+
+      const [yMin, yMax] = overviewY.domain();
+      const topPx = overviewY(yMax);
+      const bottomPx = overviewY(yMin);
+
+      const x0p = overviewX(slider.leftX);
+      const x1p = overviewX(slider.rightX);
+
+      let y0p = topPx; // Desde la parte superior del gráfico
+      let y1p = bottomPx; // Hasta la parte inferior del gráfico
+
+      out.push({
+        groupId: slider.groupId,
+        box: [
+          [Math.min(x0p, x1p), Math.min(y0p, y1p)],
+          [Math.max(x0p, x1p), Math.max(y0p, y1p)],
+        ],
+        sliderId: slider.id,
+      });
     }
-    if (x0p > x1p) [x0p, x1p] = [x1p, x0p];
-    if (y0p > y1p) [y0p, y1p] = [y1p, y0p];
-
-    out.push({ groupId, box: [[x0p, y0p], [x1p, y1p]] });
-  }
-
-  return out;
-};
-
-
-  // Callback that is called each time the selection made by the brushes is modified.
+    return out;
+  };
   function onSelectionChange(
     newDataSelected = dataSelected,
     newDataNotSelected = dataNotSelected,
@@ -1741,28 +1795,33 @@ ts.getProbePairBoxesPixels = function () {
     }
 
     render(renderSelected, renderNotSelected, hasSelection); // Print the filtered data by active dataGroups
-    
+
     renderBrushesControls();
     triggerValueUpdate(renderSelected);
-    ts.printProbes();
-     ts.printProbePairs(); 
   }
 
   // Called every time the brushGroups changes
   function onBrushGroupsChange() {
     render(renderSelected, renderNotSelected, brushes.hasSelection());
-    const existing = new Set(
-      (brushes && typeof brushes.getBrushesGroup === "function"
-        ? brushes.getBrushesGroup()
-        : new Map()
-      ).keys()
+
+    // AÑADE ESTE BLOQUE
+    const existingGroupIds = new Set(
+      Array.from(brushes.getBrushesGroup().keys())
     );
-    for (const gid of Array.from(probePairs.keys())) {
-      if (!existing.has(gid)) probePairs.delete(gid);
+    let slidersWereRemoved = false;
+    for (const [sliderId, slider] of sliders.entries()) {
+      if (!existingGroupIds.has(slider.groupId)) {
+        sliders.delete(sliderId);
+        slidersWereRemoved = true;
+      }
     }
-    ts.printProbePairs();
+
     renderBrushesControls();
     triggerValueUpdate();
+
+    if (slidersWereRemoved) {
+      ts.printSliders();
+    }
   }
 
   function updateStatus() {
@@ -1863,256 +1922,323 @@ ts.getProbePairBoxesPixels = function () {
       return outMap;
     } */
 
+  ts.addReferenceCurve = function (newCurves) {
+    if (!newCurves || !Array.isArray(newCurves) || newCurves.length === 0)
+      return;
 
+    const processedNewCurves = generateCurvePoints(
+      newCurves,
+      overviewX.domain(),
+      overviewY.domain()
+    );
 
+    const curvesForBVH = processedNewCurves.map((ref) => {
+      const scaledData = ref.data.map((point) => [
+        overviewX(point[0]),
+        overviewY(point[1]),
+      ]);
+      return Object.assign({}, ref, { data: scaledData });
+    });
 
-ts.addReferenceCurve = function(curves) {
-  curves = generateCurvePoints(curves, overviewX.domain(), overviewY.domain());
-  brushes.suppressCallbacks(true);
-  brushes.updateReferenceCurvesGroup(curves);
-  brushes.suppressCallbacks(false);
-  brushes.recomputeSelection();
-  ts.printReferenceCurves(referenceCurves);
-  ts.printProbes();
-  ts.printProbePairs();
-};
-
-
-function generateCurvePoints(curves, domainX, domainY) {
-  if (!Array.isArray(curves)) {
-    throw new Error("The reference curves must be an array of Objects");
-  }
-
-  let unnamedCount = 1; // Index for unnamed curves
-  curves.forEach((curve) => {
-    if (!curve.id) {
-      curve.id = `Reference Curve ${unnamedCount++}`;
+    const bvh = brushes.getBvh();
+    let collisionResults = [];
+    if (bvh && typeof bvh.addReferenceCurves === "function") {
+      collisionResults = bvh.addReferenceCurves(curvesForBVH) || [];
+    } else {
+      console.error(
+        "BVH o la función addReferenceCurves no están disponibles."
+      );
+      return;
     }
-  });
 
-  if (curves.length === 0) return []; // Nothing to process
+    processedNewCurves.forEach((newCurve) => {
+      const existingIndex = referenceCurves.findIndex(
+        (c) => c.id === newCurve.id
+      );
+      const collisionData = collisionResults.find(
+        (res) => res.refId === newCurve.id
+      );
 
-  const isValidNumber = (n) => isFinite(n) && !isNaN(n);
+      if (collisionData) {
+        newCurve.collisions = collisionData.collisions;
+      }
+
+      if (existingIndex !== -1) {
+        referenceCurves[existingIndex] = newCurve;
+      } else {
+        referenceCurves.push(newCurve);
+      }
+    });
+
+    brushes.recomputeSelection();
+
+    renderBrushesControls();
+    ts.printReferenceCurves(referenceCurves);
+    ts.printSliders();
+  };
+
+  function generateCurvePoints(curves, domainX, domainY) {
+    if (!Array.isArray(curves)) {
+      throw new Error("The reference curves must be an array of Objects");
+    }
+
+    let unnamedCount = 1;
+    curves.forEach((curve) => {
+      if (!curve.id) {
+        curve.id = `Reference Curve ${unnamedCount++}`;
+      }
+    });
+
+    if (curves.length === 0) return []; // Nothing to process
+
+    const isValidNumber = (n) => isFinite(n) && !isNaN(n);
 
     const processors = {
-    function: (curve, numPoints) => {
-      const xMin =
-        curve.domain && curve.domain[0] !== undefined ? curve.domain[0] : domainX[0];
-      const xMax =
-        curve.domain && curve.domain[1] !== undefined
-          ? curve.domain[1]
-          : domainX[1];
-      const step = (xMax - xMin) / numPoints;
+      function: (curve, numPoints) => {
+        const xMin =
+          curve.domain && curve.domain[0] !== undefined
+            ? curve.domain[0]
+            : domainX[0];
+        const xMax =
+          curve.domain && curve.domain[1] !== undefined
+            ? curve.domain[1]
+            : domainX[1];
+        const step = (xMax - xMin) / numPoints;
 
-      const points = [];
-      for (let x = xMin; x <= xMax; x += step) {
-        try {
-          const y = curve.func(x);
+        const points = [];
+        for (let x = xMin; x <= xMax; x += step) {
+          try {
+            const y = curve.func(x);
+            if (isValidNumber(y)) {
+              points.push([x, y]);
+            }
+          } catch (e) {}
+        }
+        return points;
+      },
+
+      parametric: (curve, numPoints) => {
+        const tMin =
+          curve.tRange && curve.tRange[0] !== undefined ? curve.tRange[0] : 0;
+        const tMax =
+          curve.tRange && curve.tRange[1] !== undefined
+            ? curve.tRange[1]
+            : 2 * Math.PI;
+        const step = (tMax - tMin) / numPoints;
+
+        const points = [];
+        for (let t = tMin; t <= tMax; t += step) {
+          try {
+            const x = curve.xFunc(t);
+            const y = curve.yFunc(t);
+            if (isValidNumber(x) && isValidNumber(y)) {
+              points.push([x, y]);
+            }
+          } catch (e) {}
+        }
+        return points;
+      },
+
+      polynomial: (curve, numPoints) => {
+        const xMin =
+          curve.domain && curve.domain[0] !== undefined
+            ? curve.domain[0]
+            : domainX[0];
+        const xMax =
+          curve.domain && curve.domain[1] !== undefined
+            ? curve.domain[1]
+            : domainX[1];
+        const step = (xMax - xMin) / numPoints;
+        const coefficients = curve.coefficients;
+
+        const points = [];
+        for (let x = xMin; x <= xMax; x += step) {
+          let y = 0;
+          for (let i = coefficients.length - 1; i >= 0; i--) {
+            y = y * x + coefficients[i];
+          }
           if (isValidNumber(y)) {
             points.push([x, y]);
           }
-        } catch (e) {}
-      }
-      return points;
-    },
-
-    parametric: (curve, numPoints) => {
-      const tMin =
-        curve.tRange && curve.tRange[0] !== undefined ? curve.tRange[0] : 0;
-      const tMax =
-        curve.tRange && curve.tRange[1] !== undefined
-          ? curve.tRange[1]
-          : 2 * Math.PI;
-      const step = (tMax - tMin) / numPoints;
-
-      const points = [];
-      for (let t = tMin; t <= tMax; t += step) {
-        try {
-          const x = curve.xFunc(t);
-          const y = curve.yFunc(t);
-          if (isValidNumber(x) && isValidNumber(y)) {
-            points.push([x, y]);
-          }
-        } catch (e) {}
-      }
-      return points;
-    },
-
-    polynomial: (curve, numPoints) => {
-      const xMin =
-        curve.domain && curve.domain[0] !== undefined
-          ? curve.domain[0]
-          : domainX[0];
-      const xMax =
-        curve.domain && curve.domain[1] !== undefined
-          ? curve.domain[1]
-          : domainX[1];
-      const step = (xMax - xMin) / numPoints;
-      const coefficients = curve.coefficients;
-
-      const points = [];
-      for (let x = xMin; x <= xMax; x += step) {
-        let y = 0;
-        for (let i = coefficients.length - 1; i >= 0; i--) {
-          y = y * x + coefficients[i];
         }
-        if (isValidNumber(y)) {
-          points.push([x, y]);
-        }
-      }
-      return points;
-    },
-  };
-  
-  const processedCurves = curves
-    .map((curve) => {
-      // Usa curve.numPoints si existe y es válido, si no usa 10000 por defecto
-      let numPoints = (curve.numPoints && isFinite(curve.numPoints)) ? curve.numPoints : 10000;
-      curve.isVisible = true; // Add isVisible property to each curve
-      const processedCurve = Object.assign({}, curve);
-      processedCurve.collisionActive = typeof curve.collisionActive !== "undefined" ? curve.collisionActive : false;
-      processedCurve.isSimplePoints = typeof curve.isSimplePoints !== "undefined" ? curve.isSimplePoints : true;
-        if ((processedCurve.color == null || processedCurve.color === "") && ts && typeof ts.brushesColorScale === "function") {
+        return points;
+      },
+    };
+
+    const processedCurves = curves
+      .map((curve) => {
+        // Usa curve.numPoints si existe y es válido, si no usa 10000 por defecto
+        let numPoints =
+          curve.numPoints && isFinite(curve.numPoints)
+            ? curve.numPoints
+            : 10000;
+        curve.isVisible = true; // Add isVisible property to each curve
+        const processedCurve = Object.assign({}, curve);
+        processedCurve.collisionActive =
+          typeof curve.collisionActive !== "undefined"
+            ? curve.collisionActive
+            : false;
+        processedCurve.isSimplePoints =
+          typeof curve.isSimplePoints !== "undefined"
+            ? curve.isSimplePoints
+            : true;
+        processedCurve.epsilon =
+          typeof curve.epsilon !== "undefined" ? curve.epsilon : 0;
+        if (
+          (processedCurve.color == null || processedCurve.color === "") &&
+          ts &&
+          typeof ts.brushesColorScale === "function"
+        ) {
           processedCurve.color = ts.brushesColorScale(processedCurve.id);
         }
-      if (typeof curve.collisions === "undefined") {
-        processedCurve.collisions = null;
-      }
+        if (typeof curve.collisions === "undefined") {
+          processedCurve.collisions = null;
+        }
 
-      // Prioriza data existente (puntos simples o polilíneas) sobre generación de funciones
-      if (curve.data && Array.isArray(curve.data) && curve.data.length > 0) {
-        // Usa data existente sin generar nuevos puntosç
-        processedCurve.data = curve.data;
-      } else if (curve.func && typeof curve.func === "function") {
-        processedCurve.data = processors.function(curve, numPoints);
-      } else if (
-        curve.xFunc &&
-        curve.yFunc &&
-        typeof curve.xFunc === "function" &&
-        typeof curve.yFunc === "function"
+        // Prioriza data existente (puntos simples o polilíneas) sobre generación de funciones
+        if (curve.data && Array.isArray(curve.data) && curve.data.length > 0) {
+          // Usa data existente sin generar nuevos puntosç
+          processedCurve.data = curve.data;
+        } else if (curve.func && typeof curve.func === "function") {
+          processedCurve.data = processors.function(curve, numPoints);
+        } else if (
+          curve.xFunc &&
+          curve.yFunc &&
+          typeof curve.xFunc === "function" &&
+          typeof curve.yFunc === "function"
+        ) {
+          processedCurve.data = processors.parametric(curve, numPoints);
+        } else if (curve.coefficients && Array.isArray(curve.coefficients)) {
+          processedCurve.data = processors.polynomial(curve, numPoints);
+        } else {
+          console.warn(
+            "Curve without data or valid functions. Skipping.",
+            curve
+          );
+          return null;
+        }
+
+        return processedCurve;
+      })
+      .filter(Boolean);
+
+    // Filtrar puntos por dominio (aplica a todos, ya sean generados o existentes)
+    processedCurves.forEach((curve) => {
+      if (
+        !curve.data ||
+        !Array.isArray(curve.data) ||
+        curve.data.length === 0
       ) {
-        processedCurve.data = processors.parametric(curve, numPoints);
-      } else if (curve.coefficients && Array.isArray(curve.coefficients)) {
-        processedCurve.data = processors.polynomial(curve, numPoints);
-      } else {
-        console.warn(
-          "Curve without data or valid functions. Skipping.",
-          curve
-        );
-        return null;
+        curve.data = [];
+        return;
       }
+      curve.data = curve.data.filter((point) => {
+        const [xVal, yVal] = point;
+        return (
+          xVal >= domainX[0] &&
+          xVal <= domainX[1] &&
+          yVal >= domainY[0] &&
+          yVal <= domainY[1] &&
+          isValidNumber(xVal) &&
+          isValidNumber(yVal)
+        );
+      });
 
-      return processedCurve;
-    })
-    .filter(Boolean);
+      curve.data.sort((a, b) => a[0] - b[0]);
+    });
 
-  // Filtrar puntos por dominio (aplica a todos, ya sean generados o existentes)
-  processedCurves.forEach((curve) => {
-    if (
-      !curve.data ||
-      !Array.isArray(curve.data) ||
-      curve.data.length === 0
-    ) {
-      curve.data = [];
-      return;
-    }
-    curve.data = curve.data.filter((point) => {
-      const [xVal, yVal] = point;
-      return (
-        xVal >= domainX[0] &&
-        xVal <= domainX[1] &&
-        yVal >= domainY[0] &&
-        yVal <= domainY[1] &&
-        isValidNumber(xVal) &&
-        isValidNumber(yVal)
+    return processedCurves;
+  }
+  ts.printReferenceCurves = function (curves) {
+    if (!overviewX) return;
+    if (!Array.isArray(curves))
+      throw new Error("The reference curves must be an array of Objects");
+
+    const visible = curves.filter((c) => c.isVisible !== false);
+
+    const domainX = overviewX.domain();
+    const domainY = overviewY.domain();
+    visible.forEach((c) => {
+      c.data.sort((a, b) => d3.ascending(a[0], b[0]));
+      c.data = c.data.filter(
+        (p) =>
+          p[0] >= domainX[0] &&
+          p[0] <= domainX[1] &&
+          p[1] >= domainY[0] &&
+          p[1] <= domainY[1]
       );
     });
 
-    curve.data.sort((a, b) => a[0] - b[0]);
-  });
+    const lineCurves = visible.filter((c) => !c.isSimplePoints);
+    const pointCurves = visible.filter((c) => c.isSimplePoints);
 
-  return processedCurves; 
-}
-  ts.printReferenceCurves = function (curves) {
-  if (!overviewX) return;
-  if (!Array.isArray(curves)) throw new Error("The reference curves must be an array of Objects");
+    // LÍNEAS
+    const line2 = d3
+      .line()
+      .defined((d) => d[1] !== undefined && d[1] !== null)
+      .x((d) => overviewX(d[0]))
+      .y((d) => overviewY(d[1]));
 
-  const visible = curves.filter(c => c.isVisible !== false);
+    const lineSel = gReferences
+      .selectAll("path.referenceCurve")
+      .data(lineCurves, (d) => d.id);
 
-  const domainX = overviewX.domain();
-  const domainY = overviewY.domain();
- visible.forEach(c => {
-  c.data.sort((a, b) => d3.ascending(a[0], b[0]));
-  c.data = c.data.filter(p => (
-    p[0] >= domainX[0] && p[0] <= domainX[1] &&
-    p[1] >= domainY[0] && p[1] <= domainY[1]
-  ));
-});
+    lineSel.exit().remove();
 
-  const lineCurves   = visible.filter(c => !c.isSimplePoints);
-  const pointCurves  = visible.filter(c =>  c.isSimplePoints);
+    lineSel
+      .enter()
+      .append("path")
+      .attr("class", "referenceCurve")
+      .merge(lineSel)
+      .attr("d", (c) => line2(c.data))
+      .attr("stroke-width", (c) => c.strokeWidth || 2)
+      .style("fill", "none")
+      .style("stroke", (c) => c.color)
+      .style("opacity", (c) =>
+        c.opacity !== undefined && c.opacity !== null ? c.opacity : 1
+      );
 
-  // LÍNEAS
-  const line2 = d3.line()
-    .defined(d => d[1] !== undefined && d[1] !== null)
-    .x(d => overviewX(d[0]))
-    .y(d => overviewY(d[1]));
-
-  const lineSel = gReferences
-    .selectAll("path.referenceCurve")
-    .data(lineCurves, d => d.id);
-
-  lineSel.exit().remove();
-
-  lineSel.enter()
-    .append("path")
-    .attr("class", "referenceCurve")
-    .merge(lineSel)
-    .attr("d", c => line2(c.data))
-    .attr("stroke-width", c => c.strokeWidth || 2)
-    .style("fill", "none")
-    .style("stroke", c => c.color)
-    .style("opacity", c => (c.opacity !== undefined && c.opacity !== null ? c.opacity : 1));
-
-  const allPoints = [];
-  pointCurves.forEach(c => {
-    c.data.forEach(p => {
-      allPoints.push({
-        curveId: c.id,
-        x: p[0],
-        y: p[1],
-        color: c.color,
-        radius: c.pointRadius || 4,
-        opacity: (c.opacity !== undefined && c.opacity !== null) ? c.opacity : 1,
-        strokeColor: c.strokeColor || "#ffffff",
-        strokeWidth: c.strokeWidth || 1
+    const allPoints = [];
+    pointCurves.forEach((c) => {
+      c.data.forEach((p) => {
+        allPoints.push({
+          curveId: c.id,
+          x: p[0],
+          y: p[1],
+          color: c.color,
+          radius: c.pointRadius || 4,
+          opacity:
+            c.opacity !== undefined && c.opacity !== null ? c.opacity : 1,
+          strokeColor: c.strokeColor || "#ffffff",
+          strokeWidth: c.strokeWidth || 1,
+        });
       });
     });
-  });
 
-  const ptSel = gReferences
-    .selectAll("circle.referencePoint")
-    .data(allPoints, d => `${d.curveId}:${d.x},${d.y}`);
+    const ptSel = gReferences
+      .selectAll("circle.referencePoint")
+      .data(allPoints, (d) => `${d.curveId}:${d.x},${d.y}`);
 
-  ptSel.exit().remove();
+    ptSel.exit().remove();
 
-  ptSel.enter()
-    .append("circle")
-    .attr("class", "referencePoint")
-    .merge(ptSel)
-    .attr("cx", d => overviewX(d.x))
-    .attr("cy", d => overviewY(d.y))
-    .attr("r", d => d.radius)
-    .style("fill", d => d.color)
-    .style("opacity", d => d.opacity)
-    .style("stroke", d => d.strokeColor)
-    .style("stroke-width", d => d.strokeWidth)
-    .select(function(){ return this; }) 
-    .append("title")
-    .text(d => `${d.curveId}: (${d.x}, ${d.y})`);
-};
-
-
+    ptSel
+      .enter()
+      .append("circle")
+      .attr("class", "referencePoint")
+      .merge(ptSel)
+      .attr("cx", (d) => overviewX(d.x))
+      .attr("cy", (d) => overviewY(d.y))
+      .attr("r", (d) => d.radius)
+      .style("fill", (d) => d.color)
+      .style("opacity", (d) => d.opacity)
+      .style("stroke", (d) => d.strokeColor)
+      .style("stroke-width", (d) => d.strokeWidth)
+      .select(function () {
+        return this;
+      })
+      .append("title")
+      .text((d) => `${d.curveId}: (${d.x}, ${d.y})`);
+  };
 
   ts.updateCallback = function (_) {
     return arguments.length ? ((updateCallback = _), ts) : updateCallback;
@@ -2121,7 +2247,6 @@ function generateCurvePoints(curves, domainX, domainY) {
   ts.statusCallback = function (_) {
     return arguments.length ? ((statusCallback = _), ts) : statusCallback;
   };
-
 
   ts.data = function (_data) {
     data = _data;
@@ -2161,17 +2286,6 @@ function generateCurvePoints(curves, domainX, domainY) {
       scaleY: overviewY,
     });
     timelineOverview.data(groupedData);
-    if (brushes.suppressCallbacks) brushes.suppressCallbacks(true);
-    brushes.updateReferenceCurvesGroup(brushes.getBvh().referenceLines);
-    if (brushes.suppressCallbacks) brushes.suppressCallbacks(false);
-    if (typeof brushes.recomputeSelection === "function")
-      brushes.recomputeSelection();
-    if (brushes.suppressSelectionCallback)
-      brushes.suppressSelectionCallback(true);
-    brushes.updateReferenceCurvesGroup(brushes.getBvh().referenceLines);
-    if (brushes.suppressSelectionCallback)
-      brushes.suppressSelectionCallback(false);
-    if (brushes.recomputeSelection) brushes.recomputeSelection(); 
 
     generateDataSelectionDiv();
 
@@ -2206,8 +2320,7 @@ function generateCurvePoints(curves, domainX, domainY) {
 
   if (referenceCurves) {
     ts.printReferenceCurves(referenceCurves);
-  ts.printProbes();
-   ts.printProbePairs(); 
+    ts.printSliders();
   }
 
   // To allow a message from the outside to rerender
@@ -2215,7 +2328,6 @@ function generateCurvePoints(curves, domainX, domainY) {
     // render(dataSelected, dataNotSelected);
     onSelectionChange();
   };
-
 
   // Remove possible previous event listener
   //target.removeEventListener("TimeWidget", onTimeWidgetEvent);
