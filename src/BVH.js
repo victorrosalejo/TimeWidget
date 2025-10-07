@@ -15,6 +15,7 @@ function BVH({
   yPartitions = 10,
   polylines = true,
   referenceLines = null,
+  scaleY
 }) {
   let me = {};
   let BVH = makeBVH();
@@ -25,8 +26,8 @@ function BVH({
     let yinc = BVH.yinc;
     data.forEach((d) => {
       let key = d[0];
-      let collisionActive = d[2]; // ← Extraer parámetros
-      let isSimplePoints = d[3]; // ← Extraer parámetros
+      let collisionActive = d[2];
+      let isSimplePoints = d[3];
 
       let lastXindex = -1;
       let lastYindex = -1;
@@ -195,14 +196,13 @@ function BVH({
     }
 
     const collisions = new Map();
-    // Metadatos por referencia
     const refMeta = new Map();
 
     const ensure = (refKey, dataKey) => {
       if (!collisions.has(refKey)) collisions.set(refKey, new Map());
       const byData = collisions.get(refKey);
       if (!byData.has(dataKey)) byData.set(dataKey, new Map());
-      return byData.get(dataKey); // Map<collisionKey, Hit>
+      return byData.get(dataKey);
     };
 
     for (let i = 0; i < BVH.BVH.length; i++) {
@@ -212,25 +212,24 @@ function BVH({
 
         for (const [dataKey, dataPolylines] of cell.data) {
           for (const [refKey, refObj] of cell.referenceLines) {
-            const refVal = refObj.data || refObj; // compatibilidad hacia atrás
+            const refVal = refObj.data || refObj;
             const collisionActive = refObj.collisionActive;
             const isSimplePoints = refObj.isSimplePoints;
 
-            // guarda metadatos por ref
             if (!refMeta.has(refKey)) refMeta.set(refKey, { isSimplePoints });
-
             if (collisionActive !== true) continue;
             if (!refVal || refVal.length === 0) continue;
 
             if (isSimplePoints) {
-              const epsilon = epsilonMap.get(refKey) || 1;
+              const epsilon_data = epsilonMap.get(refKey) || 0;       
+              const epsilon_px = Math.abs(scaleY(0) - scaleY(epsilon_data));
 
               for (const p of refVal) {
                 for (const poly of dataPolylines) {
                   for (let k = 1; k < poly.length; k++) {
                     const a = poly[k - 1],
                       b = poly[k];
-                    if (pointSegmentDistance(p, a, b) <= epsilon) {
+                    if (pointSegmentDistance(p, a, b) <= epsilon_px) {
                       const key = `p:${p[0]},${p[1]}@c:${i},${j}`;
                       const byData = ensure(refKey, dataKey);
                       if (!byData.has(key)) {
@@ -240,16 +239,14 @@ function BVH({
                           point: [p[0], p[1]],
                         });
                       }
-                      break; // evitar múltiples detecciones del mismo punto
+                      break;
                     }
                   }
                 }
               }
             } else {
-              // CASO 2: POLILÍNEAS
               for (const rpoly of refVal) {
                 if (!Array.isArray(rpoly) || rpoly.length < 2) continue;
-
                 for (let r = 1; r < rpoly.length; r++) {
                   const c0 = rpoly[r - 1],
                     d0 = rpoly[r];
@@ -259,7 +256,6 @@ function BVH({
                         b0 = dpoly[s];
                       const hit = segmentIntersect(a0, b0, c0, d0);
                       if (hit.hit) {
-                        // clave única por celda+punto para deduplicar
                         const px = +hit.point[0].toFixed(6);
                         const py = +hit.point[1].toFixed(6);
                         const key = `s:${px},${py}@c:${i},${j}`;
@@ -282,7 +278,6 @@ function BVH({
       }
     }
 
-    // Normaliza a formato JSON‑friendly
     const result = [];
     for (const [refId, byData] of collisions) {
       const entry = {
@@ -301,7 +296,6 @@ function BVH({
       result.push(entry);
     }
 
-    // Asigna las colisiones encontradas a cada curva de referencia (por id)
     result.forEach((refResult) => {
       const ref = BVH.referenceLines.find((r) => r.id === refResult.refId);
       if (ref && refResult.collisions.length > 0) {
@@ -310,7 +304,6 @@ function BVH({
     });
     return result;
   }
-
   function populateBVHReferenceLines(newReferenceLines, BVH) {
     const inBounds = (x, y) => {
       const result = x >= 0 && x < BVH.width && y >= 0 && y < BVH.height;

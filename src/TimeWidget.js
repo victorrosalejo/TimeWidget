@@ -2,6 +2,7 @@
 import { add, intervalToDuration, sub } from "date-fns";
 
 import { log } from "./utils.js";
+import { throttle } from "throttle-debounce";
 
 import TimelineDetails from "./TimelineDetails.js";
 import TimeLineOverview from "./TimeLineOverview";
@@ -324,7 +325,22 @@ function TimeWidget(
     ts.printSliders();
     renderBrushesControls();
   }
-  function onRemoveBrushGroup(id) {
+    function onRemoveBrushGroup(id) {
+    const affectedCurves = [];
+    if (Array.isArray(referenceCurves)) {
+      referenceCurves.forEach(curve => {
+        if (curve.isSimplePoints && Array.isArray(curve.associations)) {
+          const originalCount = curve.associations.length;
+          curve.associations = curve.associations.filter(assoc => assoc.id !== id);
+          if (curve.associations.length < originalCount) {
+            affectedCurves.push(curve);
+          }
+        }
+      });
+    }
+    if (affectedCurves.length > 0) {
+      ts.addReferenceCurve(affectedCurves);
+    }
     brushes.removeBrushGroup(id);
   }
 
@@ -670,8 +686,7 @@ function TimeWidget(
         assoc.enabled = groupIsEnabled && assoc.userEnabled;
       }
     }
-    brushes.updateReferenceCurves(referenceCurves);
-    brushes.recomputeSelection();
+       ts.addReferenceCurve([ref]);
     renderReferenceCurvesWidget();
   }
   function renderBrushesControls() {
@@ -1587,158 +1602,199 @@ function TimeWidget(
     // log(" Bins computed", medianBrushGroups);
   }
 
-  ts.printSliders = function () {
+function updateSliderVisuals(gSlider, slider) {
+    if (gSlider.empty()) return;
+
+    const ref = getRefCurveById(slider.rcId);
+    if (!ref) return;
+    
+    const groupColor = computeBrushColor(slider.groupId);
+
+    const drawHandle = (which) => {
+      const xDom = which === "left" ? slider.leftX : slider.rightX;
+      const xPx = overviewX(xDom);
+      const yCurve = getYAtX(ref, +xDom);
+      if (yCurve === null) return;
+
+      const yCurvePx = overviewY(yCurve);
+      const [yMin, yMax] = overviewY.domain();
+      const yEndPx =
+        slider.side === "above" ? overviewY(yMax) : overviewY(yMin);
+
+      const gHandle = gSlider.select(`.handle-${which}`);
+
+      gHandle
+        .select(".slider-line-main")
+        .attr("x1", xPx)
+        .attr("y1", yCurvePx)
+        .attr("x2", xPx)
+        .attr("y2", yEndPx)
+        .attr("stroke", groupColor);
+
+      gHandle
+        .select(".slider-line-border")
+        .attr("x1", xPx)
+        .attr("y1", yCurvePx)
+        .attr("x2", xPx)
+        .attr("y2", yEndPx);
+
+      gHandle
+        .select(".slider-hit-area")
+        .attr("x1", xPx)
+        .attr("y1", yCurvePx)
+        .attr("x2", xPx)
+        .attr("y2", yEndPx);
+    };
+
+    drawHandle("left");
+    drawHandle("right");
+
+    const xStart = +slider.leftX;
+    const xEnd = +slider.rightX;
+
+    const curveSegment = ref.data.filter(
+      (d) => +d[0] >= xStart && +d[0] <= xEnd
+    );
+
+    const startPoint = [xStart, getYAtX(ref, xStart)];
+    const endPoint = [xEnd, getYAtX(ref, xEnd)];
+    if (curveSegment.length === 0 || +curveSegment[0][0] > xStart) {
+      curveSegment.unshift(startPoint);
+    }
+    if (
+      curveSegment.length === 0 ||
+      +curveSegment[curveSegment.length - 1][0] < xEnd
+    ) {
+      curveSegment.push(endPoint);
+    }
+
+    const lineGenerator = d3
+      .line()
+      .x((d) => overviewX(d[0]))
+      .y((d) => overviewY(d[1]));
+
+    const curvePathData = lineGenerator(curveSegment);
+
+    const [yMin, yMax] = overviewY.domain();
+    const topPx = overviewY(yMax);
+    const bottomPx = overviewY(yMin);
+    const x0p = overviewX(slider.leftX);
+    const x1p = overviewX(slider.rightX);
+
+    let pathString;
+    if (slider.side === "above") {
+      pathString = `M ${x0p},${topPx} L ${x0p},${overviewY(
+        startPoint[1]
+      )} ${curvePathData.slice(1)} L ${x1p},${topPx} Z`;
+    } else {
+      pathString = `M ${x0p},${overviewY(
+        startPoint[1]
+      )} ${curvePathData.slice(
+        1
+      )} L ${x1p},${bottomPx} L ${x0p},${bottomPx} Z`;
+    }
+
+    gSlider
+      .select(".slider-background")
+      .attr("d", pathString)
+      .attr("fill", groupColor);
+}
+
+
+ts.printSliders = function () {
     if (!overviewX || !overviewY || !gProbes) return;
 
-    // Filtra sliders que están activos y cuya curva de referencia es visible y es una polilínea
     const sliderData = Array.from(sliders.values()).filter((s) => {
-      if (!s.enabled) return false;
-      const ref = getRefCurveById(s.rcId);
-      return ref && ref.isVisible !== false && !ref.isSimplePoints;
+        if (!s.enabled) return false;
+        const ref = getRefCurveById(s.rcId);
+        return ref && ref.isVisible !== false && !ref.isSimplePoints;
     });
 
     const sel = gProbes
-      .selectAll("g.slider-group")
-      .data(sliderData, (d) => d.id);
+        .selectAll("g.slider-group")
+        .data(sliderData, (d) => d.id);
+
     sel.exit().remove();
 
     const enter = sel.enter().append("g").attr("class", "slider-group");
-
-    enter.append("path").attr("class", "slider-background");
+    
+    enter.append("path").attr("class", "slider-background").attr("opacity", 0.15).style("pointer-events", "none");
 
     ["left", "right"].forEach((which) => {
-      const gSide = enter.append("g").attr("class", `handle-${which}`);
-      gSide.append("line").attr("class", "slider-line");
-      gSide
-        .append("line")
-        .attr("class", "slider-hit-area")
-        .style("stroke", "transparent")
-        .style("stroke-width", 12)
-        .style("cursor", "ew-resize");
-      gSide
-        .append("title")
-        .text("Drag to move. Double-click to toggle side (above/below).");
+        const gSide = enter.append("g").attr("class", `handle-${which}`);
+        gSide.append("line")
+            .attr("class", "slider-line-border")
+            .attr("stroke", "#333") 
+            .attr("stroke-width", "4px") 
+            .attr("stroke-opacity", 0.5)
+            .style("pointer-events", "none"); 
+
+        gSide.append("line")
+            .attr("class", "slider-line-main")
+            .attr("stroke-width", "2px"); 
+
+        gSide
+            .append("line")
+            .attr("class", "slider-hit-area")
+            .style("stroke", "transparent")
+            .style("stroke-width", 12)
+            .style("cursor", "ew-resize");
+        gSide
+            .append("title")
+            .text("Drag to move. Double-click to toggle side (above/below).");
     });
 
     const all = enter.merge(sel);
 
     all.each(function (slider) {
-      const gSlider = d3.select(this);
-      const ref = getRefCurveById(slider.rcId);
-      if (!ref) return;
+        const gSlider = d3.select(this);
+        const minGap = domainDxFromPixels(5);
 
-      const groupColor = computeBrushColor(slider.groupId);
-      const minGap = domainDxFromPixels(5);
-      const updateSliderPosition = (which, newX) => {
-        const xDom = overviewX.invert(newX);
-        const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
-        let clampedX = Math.max(minRefX, Math.min(maxRefX, +xDom));
-        const isDate = ref.data[0][0] instanceof Date;
+        const updateSliderPositionAndVisuals = (which, newX) => {
+            const xDom = overviewX.invert(newX);
+            const ref = getRefCurveById(slider.rcId);
+            if (!ref) return;
 
-        if (which === "left") {
-          const newLeftX = Math.min(clampedX, +slider.rightX - minGap);
-          slider.leftX = isDate ? new Date(newLeftX) : newLeftX;
-        } else {
-          const newRightX = Math.max(clampedX, +slider.leftX + minGap);
-          slider.rightX = isDate ? new Date(newRightX) : newRightX;
-        }
-        ts.printSliders();
-        brushes.recomputeSelection();
-      };
+            const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
+            let clampedX = Math.max(minRefX, Math.min(maxRefX, +xDom));
+            const isDate = ref.data[0][0] instanceof Date;
 
-      const drawHandle = (which) => {
-        const xDom = which === "left" ? slider.leftX : slider.rightX;
-        const xPx = overviewX(xDom);
-        const yCurve = getYAtX(ref, +xDom);
-        if (yCurve === null) return;
+            if (which === "left") {
+                const newLeftX = Math.min(clampedX, +slider.rightX - minGap);
+                slider.leftX = isDate ? new Date(newLeftX) : newLeftX;
+            } else {
+                const newRightX = Math.max(clampedX, +slider.leftX + minGap);
+                slider.rightX = isDate ? new Date(newRightX) : newRightX;
+            }
+            updateSliderVisuals(gSlider, slider);
+        };
 
-        const yCurvePx = overviewY(yCurve);
-        const [yMin, yMax] = overviewY.domain();
-        const yEndPx =
-          slider.side === "above" ? overviewY(yMax) : overviewY(yMin);
+        const recompute = () => brushes.recomputeSelection();
+        const fastVisualUpdate = throttle(16, updateSliderPositionAndVisuals);
 
-        const gHandle = gSlider.select(`.handle-${which}`);
-        gHandle
-          .select(".slider-line")
-          .attr("x1", xPx)
-          .attr("y1", yCurvePx)
-          .attr("x2", xPx)
-          .attr("y2", yEndPx)
-          .attr("stroke", groupColor)
-          .attr("stroke-width", 2);
-
-        gHandle
-          .select(".slider-hit-area")
-          .attr("x1", xPx)
-          .attr("y1", yCurvePx)
-          .attr("x2", xPx)
-          .attr("y2", yEndPx)
-          .call(d3.drag().on("drag", (e) => updateSliderPosition(which, e.x)))
-          .on("dblclick", (e) => {
-            e.preventDefault(); // Evita efectos no deseados como la selección de texto
-            slider.side = slider.side === "above" ? "below" : "above";
-            ts.printSliders(); // Vuelve a dibujar el slider en su nueva posición
-            brushes.recomputeSelection(); // El área de selección ha cambiado, hay que recalcular
-          });
-      };
-
-      drawHandle("left");
-      drawHandle("right");
-
-      const xStart = +slider.leftX;
-      const xEnd = +slider.rightX;
-
-      const curveSegment = ref.data.filter(
-        (d) => +d[0] >= xStart && +d[0] <= xEnd
-      );
-
-      const startPoint = [xStart, getYAtX(ref, xStart)];
-      const endPoint = [xEnd, getYAtX(ref, xEnd)];
-      if (curveSegment.length === 0 || +curveSegment[0][0] > xStart) {
-        curveSegment.unshift(startPoint);
-      }
-      if (
-        curveSegment.length === 0 ||
-        +curveSegment[curveSegment.length - 1][0] < xEnd
-      ) {
-        curveSegment.push(endPoint);
-      }
-
-      const lineGenerator = d3
-        .line()
-        .x((d) => overviewX(d[0]))
-        .y((d) => overviewY(d[1]));
-
-      const curvePathData = lineGenerator(curveSegment);
-
-      const [yMin, yMax] = overviewY.domain();
-      const topPx = overviewY(yMax);
-      const bottomPx = overviewY(yMin);
-      const x0p = overviewX(slider.leftX);
-      const x1p = overviewX(slider.rightX);
-
-      let pathString;
-      if (slider.side === "above") {
-        pathString = `M ${x0p},${topPx} L ${x0p},${overviewY(
-          startPoint[1]
-        )} ${curvePathData.slice(1)} L ${x1p},${topPx} Z`;
-      } else {
-        pathString = `M ${x0p},${overviewY(
-          startPoint[1]
-        )} ${curvePathData.slice(
-          1
-        )} L ${x1p},${bottomPx} L ${x0p},${bottomPx} Z`;
-      }
-
-      gSlider
-        .select(".slider-background")
-        .attr("d", pathString)
-        .attr("fill", groupColor)
-        .attr("opacity", 0.15)
-        .style("pointer-events", "none");
+        ["left", "right"].forEach(which => {
+            gSlider.select(`.handle-${which} .slider-hit-area`)
+                .call(d3.drag()
+                    .on("drag", (e) => {
+                        fastVisualUpdate(which, e.x);
+                    })
+                    .on("end", (e) => {
+                        updateSliderPositionAndVisuals(which, e.x);
+                        recompute();
+                    })
+                )
+                .on("dblclick", (e) => {
+                    e.preventDefault();
+                    slider.side = slider.side === "above" ? "below" : "above";
+                    updateSliderVisuals(gSlider, slider);
+                    recompute();
+                });
+        });
+        
+        updateSliderVisuals(gSlider, slider);
     });
-  };
-
+};
+ 
   ts.getActiveSliderBoxes = function () {
     if (!overviewX || !overviewY) return [];
     const out = [];
@@ -1804,7 +1860,6 @@ function TimeWidget(
   function onBrushGroupsChange() {
     render(renderSelected, renderNotSelected, brushes.hasSelection());
 
-    // AÑADE ESTE BLOQUE
     const existingGroupIds = new Set(
       Array.from(brushes.getBrushesGroup().keys())
     );
@@ -1816,11 +1871,29 @@ function TimeWidget(
       }
     }
 
+    let associationsWereRemoved = false;
+    if (Array.isArray(referenceCurves)) {
+        referenceCurves.forEach(curve => {
+            if (curve.isSimplePoints && Array.isArray(curve.associations)) {
+                const originalCount = curve.associations.length;
+                curve.associations = curve.associations.filter(assoc => existingGroupIds.has(assoc.id));
+                
+                if (curve.associations.length < originalCount) {
+                    associationsWereRemoved = true;
+                }
+            }
+        });
+    }
+   
+
     renderBrushesControls();
     triggerValueUpdate();
 
-    if (slidersWereRemoved) {
+    if (slidersWereRemoved || associationsWereRemoved) {
       ts.printSliders();
+      if (associationsWereRemoved) {
+          brushes.recomputeSelection();
+      }
     }
   }
 

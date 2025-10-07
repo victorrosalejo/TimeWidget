@@ -53,15 +53,15 @@ function brushInteraction({
     brushContextMenu,
     suppress = false,
     brushWithTooltip;
-  if (!data) return;
-  me.getSliders = getSliders;
-  gBrushes = d3.select(element);
-  gBrushes.node().innerHTML = "";
-
-  tBrushed = throttle(updateTime, brushed);
-  tUpdateSelection = throttle(updateTime, updateSelection);
-  tShowTooltip = throttle(50, showBrushTooltip);
-  tSelectionCall = throttle(50, updateSelectedCoordinates);
+    const dataMap = new Map(data.map(d => [d[0], d]));
+    if (!data) return;
+    me.getSliders = getSliders;
+    gBrushes = d3.select(element);
+    gBrushes.node().innerHTML = "";
+    tBrushed = throttle(updateTime, brushed);
+    tUpdateSelection = throttle(updateTime, updateSelection);
+    tShowTooltip = throttle(50, showBrushTooltip);
+    tSelectionCall = throttle(50, updateSelectedCoordinates);
 
   dataSelected = new Map();
   dataNotSelected = [];
@@ -89,6 +89,7 @@ function brushInteraction({
     xPartitions,
     yPartitions,
     referenceLines: BVHReferenceLines, // Added reference lines to the BVH for intersection calculations
+    scaleY: scaleY, 
   });
 
   brushTooltip = brushTooltipEditable({
@@ -317,116 +318,139 @@ function brushInteraction({
     return { hit: false };
   }
 
-  function brushFilter() {
+function brushFilter() {
     const newDataSelected = new Map();
-    const getSliders = me.getSliders || (() => new Map());
-    const sliders = getSliders();
 
-    brushesGroup.forEach((group, groupId) => {
-      newDataSelected.set(groupId, []);
-    });
-
-    if (brushSize > 0) {
-      for (const d of data) {
-        for (const [groupId, brushGroup] of brushesGroup.entries()) {
-          if (brushGroup.isEnable && intersectGroup(d, brushGroup.brushes)) {
-            newDataSelected.get(groupId).push(d);
-          }
-        }
-      }
-    }
-
-    const sliderBoxes =
-      (typeof getProbePairBoxes === "function" ? getProbePairBoxes() : []) ||
-      [];
+    const sliderBoxes = (typeof getProbePairBoxes === "function" ? getProbePairBoxes() : []) || [];
+    const getSlidersFunc = me.getSliders || (() => new Map());
+    const sliders = getSlidersFunc();
     const dataDomainCurves = referenceCurves || [];
+    
+    const bvh = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
+    const curvesFromBvh = (bvh && Array.isArray(bvh.referenceLines)) ? bvh.referenceLines : [];
+   
+    for (const [groupId, group] of brushesGroup.entries()) {
+        const brushSelectedIds = new Set();
+        if (group.isEnable && group.brushes.size > 0) {
+            const andBrushes = [];
+            const orBrushes = [];
 
-    if (BVH_ && sliderBoxes.length > 0) {
-      sliderBoxes.forEach(({ groupId, box, sliderId }) => {
-        const slider = sliders.get(sliderId);
-        if (!slider) return;
-
-        const refCurve = dataDomainCurves.find((rc) => rc.id === slider.rcId);
-        if (!refCurve) return;
-
-        const [[x0, y0], [x1, y1]] = box;
-        const candidateIds = BVH_.intersect(x0, y0, x1, y1);
-        const groupSelection = newDataSelected.get(groupId) || [];
-        const existingIdsInGroup = new Set(
-          groupSelection.map((item) => item[0])
-        );
-
-        for (const id of candidateIds) {
-          if (!existingIdsInGroup.has(id)) {
-            const timeline = data.find((d) => d[0] === id);
-            if (
-              timeline &&
-              timeline[1] &&
-              isTimelineInSliderCurtain(timeline[1], slider, refCurve)
-            ) {
-              groupSelection.push(timeline);
-              existingIdsInGroup.add(id);
-            }
-          }
-        }
-        newDataSelected.set(groupId, groupSelection);
-      });
-    }
-
-    const bvh =
-      BVH_ && typeof BVH_.getBvh === "function" ? BVH_.getBvh() : BVH_;
-    const curvesFromBvh =
-      bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
-    const associationsMap = new Map(
-      dataDomainCurves.map((rc) => [rc.id, rc.associations || []])
-    );
-
-    if (curvesFromBvh.length > 0) {
-      curvesFromBvh.forEach((rcFromBvh) => {
-        const associations = associationsMap.get(rcFromBvh.id) || [];
-        if (
-          rcFromBvh.isVisible !== false &&
-          rcFromBvh.isSimplePoints &&
-          Array.isArray(associations) &&
-          Array.isArray(rcFromBvh.collisions)
-        ) {
-          associations.forEach((assoc) => {
-            if (assoc.enabled) {
-              const groupId = assoc.id;
-              const group = brushesGroup.get(groupId);
-              if (group && group.isEnable) {
-                const groupSelection = newDataSelected.get(groupId) || [];
-                const existingIdsInGroup = new Set(
-                  groupSelection.map((item) => item[0])
-                );
-                rcFromBvh.collisions.forEach((collision) => {
-                  const timelineId = collision.dataId;
-                  if (!existingIdsInGroup.has(timelineId)) {
-                    const timeline = data.find((d) => d[0] === timelineId);
-                    if (timeline) {
-                      groupSelection.push(timeline);
-                      existingIdsInGroup.add(timelineId);
-                    }
-                  }
+            group.brushes.forEach(brush => {
+                if (brush.selection) {
+                    (brush.aggregation === BrushAggregation.And ? andBrushes : orBrushes).push(brush);
+                }
+            });
+            
+            if (orBrushes.length > 0) {
+                const orResults = new Set();
+                orBrushes.forEach(brush => {
+                    const [[x0, y0], [x1, y1]] = brush.selection;
+                    const results = (brush.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1);
+                    results.forEach(id => orResults.add(id));
                 });
-                newDataSelected.set(groupId, groupSelection);
-              }
+                 orResults.forEach(id => brushSelectedIds.add(id));
             }
-          });
+
+            if (andBrushes.length > 0) {
+                const firstAnd = andBrushes[0];
+                const [[x0, y0], [x1, y1]] = firstAnd.selection;
+                let andResults = new Set((firstAnd.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1));
+
+                for (let i = 1; i < andBrushes.length; i++) {
+                    if (andResults.size === 0) break;
+                    const brush = andBrushes[i];
+                    const [[x0_i, y0_i], [x1_i, y1_i]] = brush.selection;
+                    const currentResults = new Set((brush.mode === BrushModes.Contains) ? BVH_.contains(x0_i, y0_i, x1_i, y1_i) : BVH_.intersect(x0_i, y0_i, x1_i, y1_i));
+                    andResults = new Set([...andResults].filter(id => currentResults.has(id)));
+                }
+                
+                if (orBrushes.length === 0) {
+                     andResults.forEach(id => brushSelectedIds.add(id));
+                } else {
+                     andResults.forEach(id => brushSelectedIds.add(id));
+                }
+            }
         }
-      });
+
+        const programmaticSelectedIds = new Set();
+        
+        const slidersForGroup = sliderBoxes.filter(s => s.groupId === groupId);
+        if (slidersForGroup.length > 0) {
+            let sliderIntersectionSet = new Set();
+
+            slidersForGroup.forEach((sliderInfo, index) => {
+                const currentSliderSelection = new Set();
+                const slider = sliders.get(sliderInfo.sliderId);
+                if (!slider) return;
+
+                const refCurve = dataDomainCurves.find((rc) => rc.id === slider.rcId);
+                if (!refCurve) return;
+
+                const [[x0, y0], [x1, y1]] = sliderInfo.box;
+                const candidateIds = BVH_.intersect(x0, y0, x1, y1);
+                
+                for (const id of candidateIds) {
+                    const timeline = dataMap.get(id);
+                    if (timeline && timeline[1] && isTimelineInSliderCurtain(timeline[1], slider, refCurve)) {
+                        currentSliderSelection.add(id);
+                    }
+                }
+
+                if (index === 0) {
+                    sliderIntersectionSet = currentSliderSelection;
+                } else {
+                    sliderIntersectionSet = new Set([...sliderIntersectionSet].filter(id => currentSliderSelection.has(id)));
+                }
+            });
+
+            sliderIntersectionSet.forEach(id => programmaticSelectedIds.add(id));
+        }
+
+        curvesFromBvh.forEach((rcFromBvh) => {
+            if (rcFromBvh.isSimplePoints && Array.isArray(rcFromBvh.associations) && Array.isArray(rcFromBvh.collisions)) {
+                rcFromBvh.associations.forEach(assoc => {
+                    if (assoc.enabled && assoc.id === groupId) {
+                        rcFromBvh.collisions.forEach(collision => {
+                            programmaticSelectedIds.add(collision.dataId);
+                        });
+                    }
+                });
+            }
+        });
+
+        let finalSelectedIds = new Set();
+        const hasBrushSelection = brushSelectedIds.size > 0;
+        const hasProgrammaticSelection = programmaticSelectedIds.size > 0;
+
+        if (hasBrushSelection && hasProgrammaticSelection) {
+            finalSelectedIds = new Set([...brushSelectedIds].filter(id => programmaticSelectedIds.has(id)));
+        } else if (hasBrushSelection) {
+            finalSelectedIds = brushSelectedIds;
+        } else if (hasProgrammaticSelection) {
+            finalSelectedIds = programmaticSelectedIds;
+        }
+        
+        const groupSelection = [];
+        finalSelectedIds.forEach(id => {
+            if (dataMap.has(id)) {
+                groupSelection.push(dataMap.get(id));
+            }
+        });
+        newDataSelected.set(groupId, groupSelection);
     }
 
-    const selectedIds = new Set();
+    const allSelectedIds = new Set();
     newDataSelected.forEach((items) => {
-      items.forEach((item) => selectedIds.add(item[0]));
+      items.forEach((item) => allSelectedIds.add(item[0]));
     });
     dataSelected = newDataSelected;
-    dataNotSelected = data.filter((d) => !selectedIds.has(d[0]));
-    const hasAnySelection = selectedIds.size > 0;
-    if (!suppress)
+    dataNotSelected = data.filter((d) => !allSelectedIds.has(d[0]));
+    const hasAnySelection = allSelectedIds.size > 0;
+
+    if (!suppress) {
       selectionCallback(dataSelected, dataNotSelected, hasAnySelection);
-  }
+    }
+}
 
   function removeBrush([id, brush]) {
     brushSize--;
@@ -872,7 +896,6 @@ function brushInteraction({
     updateStatus();
   };
 
-  // Reemplaza addBrushGroup (línea 1032 aprox.) con esta versión:
   me.addBrushGroup = function () {
     let newId = getUnusedIdBrushGroup();
     let brushGroup = {
