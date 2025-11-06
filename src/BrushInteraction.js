@@ -68,14 +68,16 @@ function brushInteraction({
   brushesGroup = new Map();
   brushCount = 0;
   brushSize = 0;
+  const unclampedScaleY = scaleY.copy().clamp(false);
+
   let BVHData = data.map((d) => {
     let polyline = d[1].map((d) => [scaleX(x(d)), scaleY(y(d))]);
     return [d[0], polyline];
   });
 
-  let BVHReferenceLines = referenceCurves
-    ? referenceCurves.map((ref) => {
-        // Solo escalado directo
+   let curves = referenceCurves || [];
+  let BVHReferenceLines = curves
+    ? curves.map((ref) => {
         let scaledData = ref.data.map((pt) => {
           return [scaleX(pt[0]), scaleY(pt[1])];
         });
@@ -88,9 +90,10 @@ function brushInteraction({
     data: BVHData,
     xPartitions,
     yPartitions,
-    referenceLines: BVHReferenceLines, // Added reference lines to the BVH for intersection calculations
-    scaleY: scaleY, 
+    referenceLines: BVHReferenceLines,
+    scaleY: unclampedScaleY, 
   });
+  
 
   brushTooltip = brushTooltipEditable({
     fmtX,
@@ -330,8 +333,12 @@ function brushFilter() {
     const curvesFromBvh = (bvh && Array.isArray(bvh.referenceLines)) ? bvh.referenceLines : [];
    
     for (const [groupId, group] of brushesGroup.entries()) {
+        // --- 1. Calcular selecciones de TIMEBOXES ---
         const brushSelectedIds = new Set();
-        if (group.isEnable && group.brushes.size > 0) {
+        // Verificamos si hay al menos un timebox definido para este grupo
+        const hasActiveTimeboxes = Array.from(group.brushes.values()).some(brush => brush.selection);
+        
+        if (group.isEnable && hasActiveTimeboxes) {
             const andBrushes = [];
             const orBrushes = [];
 
@@ -372,9 +379,11 @@ function brushFilter() {
             }
         }
 
+        // --- 2. Calcular selecciones de SLIDERS y PUNTOS ---
         const programmaticSelectedIds = new Set();
-        
         const slidersForGroup = sliderBoxes.filter(s => s.groupId === groupId);
+        let hasActiveProgrammaticFilters = slidersForGroup.length > 0;
+
         if (slidersForGroup.length > 0) {
             let sliderIntersectionSet = new Set();
 
@@ -410,6 +419,7 @@ function brushFilter() {
             if (rcFromBvh.isSimplePoints && Array.isArray(rcFromBvh.associations) && Array.isArray(rcFromBvh.collisions)) {
                 rcFromBvh.associations.forEach(assoc => {
                     if (assoc.enabled && assoc.id === groupId) {
+                        hasActiveProgrammaticFilters = true; // Marcamos que hay un filtro programático activo
                         rcFromBvh.collisions.forEach(collision => {
                             programmaticSelectedIds.add(collision.dataId);
                         });
@@ -418,15 +428,17 @@ function brushFilter() {
             }
         });
 
+        // --- 3. Combinar los resultados con la LÓGICA CORRECTA ---
         let finalSelectedIds = new Set();
-        const hasBrushSelection = brushSelectedIds.size > 0;
-        const hasProgrammaticSelection = programmaticSelectedIds.size > 0;
 
-        if (hasBrushSelection && hasProgrammaticSelection) {
+        if (hasActiveTimeboxes && hasActiveProgrammaticFilters) {
+            // Si AMBOS tipos de filtro están activos, hacemos la INTERSECCIÓN.
             finalSelectedIds = new Set([...brushSelectedIds].filter(id => programmaticSelectedIds.has(id)));
-        } else if (hasBrushSelection) {
+        } else if (hasActiveTimeboxes) {
+            // Si SOLO hay timeboxes activos, usamos sus resultados.
             finalSelectedIds = brushSelectedIds;
-        } else if (hasProgrammaticSelection) {
+        } else if (hasActiveProgrammaticFilters) {
+            // Si SOLO hay sliders/puntos activos, usamos sus resultados.
             finalSelectedIds = programmaticSelectedIds;
         }
         

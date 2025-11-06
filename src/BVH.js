@@ -20,6 +20,7 @@ function BVH({
   let me = {};
   let BVH = makeBVH();
   console.log("BVH Created", BVH);
+  const unclampedScaleY = scaleY.copy().clamp(false);
 
   function pupulateBVHPolylines(data, BVH, Rcurve) {
     let xinc = BVH.xinc;
@@ -187,121 +188,135 @@ function BVH({
     return Math.hypot(p[0] - closest[0], p[1] - closest[1]);
   }
 
-  function RCIntersection(BVH) {
-    const epsilonMap = new Map();
-    if (BVH.referenceLines) {
-      BVH.referenceLines.forEach((ref) => {
-        epsilonMap.set(ref.id, ref.epsilon !== undefined ? ref.epsilon : 0);
-      });
-    }
-
+ function RCIntersection(BVH) {
     const collisions = new Map();
     const refMeta = new Map();
 
-    const ensure = (refKey, dataKey) => {
-      if (!collisions.has(refKey)) collisions.set(refKey, new Map());
-      const byData = collisions.get(refKey);
-      if (!byData.has(dataKey)) byData.set(dataKey, new Map());
-      return byData.get(dataKey);
-    };
-
-    for (let i = 0; i < BVH.BVH.length; i++) {
-      for (let j = 0; j < BVH.BVH[i].length; j++) {
-        const cell = BVH.BVH[i][j];
-        if (cell.referenceLines.size === 0 || cell.data.size === 0) continue;
-
-        for (const [dataKey, dataPolylines] of cell.data) {
-          for (const [refKey, refObj] of cell.referenceLines) {
-            const refVal = refObj.data || refObj;
-            const collisionActive = refObj.collisionActive;
-            const isSimplePoints = refObj.isSimplePoints;
-
-            if (!refMeta.has(refKey)) refMeta.set(refKey, { isSimplePoints });
-            if (collisionActive !== true) continue;
-            if (!refVal || refVal.length === 0) continue;
-
-            if (isSimplePoints) {
-              const epsilon_data = epsilonMap.get(refKey) || 0;       
-              const epsilon_px = Math.abs(scaleY(0) - scaleY(epsilon_data));
-
-              for (const p of refVal) {
-                for (const poly of dataPolylines) {
-                  for (let k = 1; k < poly.length; k++) {
-                    const a = poly[k - 1],
-                      b = poly[k];
-                    if (pointSegmentDistance(p, a, b) <= epsilon_px) {
-                      const key = `p:${p[0]},${p[1]}@c:${i},${j}`;
-                      const byData = ensure(refKey, dataKey);
-                      if (!byData.has(key)) {
-                        byData.set(key, {
-                          type: "point",
-                          cell: [i, j],
-                          point: [p[0], p[1]],
-                        });
-                      }
-                      break;
-                    }
-                  }
-                }
-              }
-            } else {
-              for (const rpoly of refVal) {
-                if (!Array.isArray(rpoly) || rpoly.length < 2) continue;
-                for (let r = 1; r < rpoly.length; r++) {
-                  const c0 = rpoly[r - 1],
-                    d0 = rpoly[r];
-                  for (const dpoly of dataPolylines) {
-                    for (let s = 1; s < dpoly.length; s++) {
-                      const a0 = dpoly[s - 1],
-                        b0 = dpoly[s];
-                      const hit = segmentIntersect(a0, b0, c0, d0);
-                      if (hit.hit) {
-                        const px = +hit.point[0].toFixed(6);
-                        const py = +hit.point[1].toFixed(6);
-                        const key = `s:${px},${py}@c:${i},${j}`;
-                        const byData = ensure(refKey, dataKey);
-                        if (!byData.has(key)) {
-                          byData.set(key, {
-                            type: "segment",
-                            cell: [i, j],
-                            point: [px, py],
-                          });
-                        }
-                      }
-                    }
-                  }
-                }
-              }
+    // 1. Aplanar todos los puntos de referencia simples en una sola lista para un acceso más fácil.
+    const allRefPoints = [];
+    if (BVH.referenceLines) {
+        BVH.referenceLines.forEach(ref => {
+            if (ref.isSimplePoints && ref.collisionActive) {
+                refMeta.set(ref.id, { isSimplePoints: true });
+                (ref.data || []).forEach(pointCoords => {
+                    allRefPoints.push({
+                        id: ref.id,
+                        point: pointCoords,
+                        epsilon: ref.epsilon !== undefined ? ref.epsilon : 0,
+                    });
+                });
             }
-          }
-        }
-      }
+        });
     }
 
+    // Si no hay puntos de referencia activos, no hay nada que hacer.
+    if (allRefPoints.length === 0) {
+        // Aún así, procesamos las colisiones de polilíneas si las hubiera
+        // (Este bloque se puede añadir si también se necesita la lógica de línea vs línea)
+        return [];
+    }
+
+    // 2. Iterar sobre cada punto de referencia individualmente.
+    allRefPoints.forEach(refPoint => {
+        if (refPoint.epsilon <= 0) return; // Si no hay tolerancia, no hay área que comprobar.
+
+        // 3. Calcular el área de búsqueda en píxeles.
+        const epsilon_data = refPoint.epsilon;
+        const epsilon_px = Math.abs(unclampedScaleY(0) - unclampedScaleY(epsilon_data));
+        const [px, py] = refPoint.point;
+
+        // Definimos una "caja de búsqueda" (bounding box) alrededor del círculo de tolerancia.
+        const searchBox = {
+            x0: px - epsilon_px,
+            y0: py - epsilon_px,
+            x1: px + epsilon_px,
+            y1: py + epsilon_px,
+        };
+
+        // 4. Usar la caja de búsqueda para obtener todas las celdas del BVH relevantes.
+        const [[initI, finI], [initJ, finJ]] = getCollidingCells(searchBox.x0, searchBox.y0, searchBox.x1, searchBox.y1);
+
+        // 5. Recopilar todas las líneas de datos únicas de esas celdas para evitar comprobaciones repetidas.
+        const candidatePolylines = new Map();
+        for (let i = initI; i <= finI; i++) {
+            for (let j = initJ; j <= finJ; j++) {
+                if (BVH.BVH[i] && BVH.BVH[i][j]) {
+                    for (const [dataKey, polylines] of BVH.BVH[i][j].data.entries()) {
+                        if (!candidatePolylines.has(dataKey)) {
+                            candidatePolylines.set(dataKey, polylines);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 6. Realizar la comprobación de distancia precisa solo con las líneas candidatas.
+        for (const [dataKey, dataPolylines] of candidatePolylines.entries()) {
+            let collisionFound = false;
+            for (const poly of dataPolylines) {
+                for (let k = 1; k < poly.length; k++) {
+                    const a = poly[k - 1];
+                    const b = poly[k];
+                    const distance = pointSegmentDistance(refPoint.point, a, b);
+
+// Convertimos la distancia en píxeles a su equivalente en unidades de datos del eje Y
+const distancia_en_datos = Math.abs(scaleY.invert(0) - scaleY.invert(distance));
+
+console.log({
+    "Tolerancia en Datos (eje Y)": epsilon_data,
+    "Distancia en Datos (eje Y)": distancia_en_datos,
+    "---": "---", // Separador para claridad
+    "Tolerancia en Píxeles (radio)": epsilon_px,
+    "Distancia Calculada (en píxeles)": distance,
+    "--- ": "---", // Separador para claridad
+    "Colisión Detectada": distance <= epsilon_px
+});
+                    if (distance <= epsilon_px) {
+                        // Colisión encontrada. La registramos.
+                        if (!collisions.has(refPoint.id)) collisions.set(refPoint.id, new Map());
+                        const byData = collisions.get(refPoint.id);
+                        if (!byData.has(dataKey)) byData.set(dataKey, new Map());
+                        const hits = byData.get(dataKey);
+
+                        const hitKey = `p:${px},${py}`;
+                        if (!hits.has(hitKey)) {
+                            hits.set(hitKey, { type: "point", point: [px, py] });
+                        }
+                        
+                        collisionFound = true;
+                        break; // Salimos del bucle de segmentos
+                    }
+                }
+                if (collisionFound) break; // Salimos del bucle de polilíneas
+            }
+        }
+    });
+
+    // 7. Formatear el resultado final (sin cambios en esta parte).
     const result = [];
     for (const [refId, byData] of collisions) {
-      const entry = {
-        refId,
-        isSimplePoints:
-          !!refMeta.get(refId) && refMeta.get(refId).isSimplePoints,
-        collisions: [],
-      };
-      for (const [dataId, hitsMap] of byData) {
-        entry.collisions.push({
-          dataId,
-          count: hitsMap.size,
-          hits: Array.from(hitsMap.values()),
-        });
-      }
-      result.push(entry);
+        const entry = {
+            refId,
+            isSimplePoints: !!refMeta.get(refId) && refMeta.get(refId).isSimplePoints,
+            collisions: [],
+        };
+        for (const [dataId, hitsMap] of byData) {
+            entry.collisions.push({
+                dataId,
+                count: hitsMap.size,
+                hits: Array.from(hitsMap.values()),
+            });
+        }
+        result.push(entry);
     }
-
+    
     result.forEach((refResult) => {
-      const ref = BVH.referenceLines.find((r) => r.id === refResult.refId);
-      if (ref && refResult.collisions.length > 0) {
-        ref.collisions = refResult.collisions;
-      }
+        const ref = BVH.referenceLines.find((r) => r.id === refResult.refId);
+        if (ref && refResult.collisions.length > 0) {
+            ref.collisions = refResult.collisions;
+        }
     });
+
     return result;
   }
   function populateBVHReferenceLines(newReferenceLines, BVH) {

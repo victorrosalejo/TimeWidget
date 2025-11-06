@@ -479,13 +479,14 @@ function TimeWidget(
       .select("#nonSelectedCount")
       .text(renderNotSelected.length);
   }
-
-  function renderReferenceCurvesWidget() {
-    const rcList = d3.select(target).select("#rcList");
+function renderReferenceCurvesWidget() {
+    const rcWidget = d3.select(target).select("#rcWidget");
+    const rcList = rcWidget.select("#rcList");
     if (!referenceCurves || referenceCurves.length === 0) {
-      rcList.html("");
+      rcWidget.style("display", "none");
       return;
     }
+    rcWidget.style("display", "block");
 
     rcList
       .selectAll(".rcControl")
@@ -711,14 +712,29 @@ function TimeWidget(
 
     brushes.updateReferenceCurves(referenceCurves);
   }
-  function onAddSlider(rcId) {
-    const ref = getRefCurveById(rcId);
-    if (!ref || !ref.data || ref.data.length < 2 || ref.isSimplePoints) {
+ function onAddSlider(rcId) {
+    // Primero, encontramos la curva por su ID, sin importar si está visible o no.
+    const ref = Array.isArray(referenceCurves)
+      ? referenceCurves.find((c) => c.id === rcId)
+      : null;
+
+    if (!ref) {
+      // Este es un caso de seguridad, es poco probable que ocurra.
+      alert(`Error: No se encontró la curva de referencia con ID "${rcId}".`);
+      return;
+    }
+
+    if (ref.isVisible === false) {
+      alert("You can't add a slider to a reference curve that isn't visible. Please activate it first.");
+      return; // Detenemos la ejecución aquí.
+    }
+    
+    if (!ref.data || ref.data.length < 2 || ref.isSimplePoints) {
       console.warn(
         "Cannot add slider to this reference curve (no data, not a polyline, or not found)."
       );
       alert(
-        "Cannot add slider to this reference curve. It might not be a polyline or has no data."
+        "You can't add a slider to this reference curve. It may not be a polyline or may not have enough data."
       );
       return;
     }
@@ -833,6 +849,7 @@ function TimeWidget(
 
   function init() {
     //CreateOverView
+    referenceCurves = referenceCurves || [];
     divData = d3
       .select(divControls)
       .selectAll("div#divData")
@@ -2050,7 +2067,7 @@ ts.printSliders = function () {
     ts.printSliders();
   };
 
-  function generateCurvePoints(curves, domainX, domainY) {
+ function generateCurvePoints(curves, domainX, domainY) {
     if (!Array.isArray(curves)) {
       throw new Error("The reference curves must be an array of Objects");
     }
@@ -2190,6 +2207,10 @@ ts.printSliders = function () {
           );
           return null;
         }
+        
+        if (processedCurve.data && processedCurve.data.length === 1) {
+          processedCurve.isSimplePoints = true;
+        }
 
         return processedCurve;
       })
@@ -2222,10 +2243,15 @@ ts.printSliders = function () {
 
     return processedCurves;
   }
-  ts.printReferenceCurves = function (curves) {
+ts.printReferenceCurves = function (curves) {
     if (!overviewX) return;
     if (!Array.isArray(curves))
       throw new Error("The reference curves must be an array of Objects");
+
+    // --- INICIO CÓDIGO NUEVO (1/2) ---
+    // Creamos una copia de la escala Y pero sin la propiedad clamp.
+    const unclampedY = overviewY.copy().clamp(false);
+    // --- FIN CÓDIGO NUEVO (1/2) ---
 
     const visible = curves.filter((c) => c.isVisible !== false);
 
@@ -2245,7 +2271,7 @@ ts.printSliders = function () {
     const lineCurves = visible.filter((c) => !c.isSimplePoints);
     const pointCurves = visible.filter((c) => c.isSimplePoints);
 
-    // LÍNEAS
+    // DIBUJA LAS LÍNEAS (sin cambios aquí)
     const line2 = d3
       .line()
       .defined((d) => d[1] !== undefined && d[1] !== null)
@@ -2271,6 +2297,7 @@ ts.printSliders = function () {
         c.opacity !== undefined && c.opacity !== null ? c.opacity : 1
       );
 
+    // --- LÓGICA PARA DIBUJAR PUNTOS Y SUS RADIOS DE TOLERANCIA ---
     const allPoints = [];
     pointCurves.forEach((c) => {
       c.data.forEach((p) => {
@@ -2284,10 +2311,35 @@ ts.printSliders = function () {
             c.opacity !== undefined && c.opacity !== null ? c.opacity : 1,
           strokeColor: c.strokeColor || "#ffffff",
           strokeWidth: c.strokeWidth || 1,
+          epsilon: c.epsilon || 0,
         });
       });
     });
 
+    // Dibuja los círculos de tolerancia (el área de influencia)
+    const toleranceSel = gReferences
+      .selectAll("circle.referenceTolerance")
+      .data(allPoints.filter(d => d.epsilon > 0), (d) => `${d.curveId}:${d.x},${d.y}`);
+
+    toleranceSel.exit().remove();
+
+    toleranceSel.enter()
+      .append("circle")
+      .attr("class", "referenceTolerance")
+      .merge(toleranceSel)
+      .attr("cx", (d) => overviewX(d.x))
+      .attr("cy", (d) => overviewY(d.y))
+      // --- INICIO CÓDIGO MODIFICADO (2/2) ---
+      // Usamos la nueva escala "unclampedY" para que el radio pueda crecer fuera de los límites.
+      .attr("r", d => Math.abs(unclampedY(0) - unclampedY(d.epsilon))) 
+      // --- FIN CÓDIGO MODIFICADO (2/2) ---
+      .style("fill", d => d.color)
+      .style("stroke", d => d3.color(d.color).darker(0.5))
+      .style("stroke-width", 1)
+      .style("opacity", 0.2)
+      .style("pointer-events", "none"); 
+
+    // Dibuja los puntos de referencia (código original)
     const ptSel = gReferences
       .selectAll("circle.referencePoint")
       .data(allPoints, (d) => `${d.curveId}:${d.x},${d.y}`);
@@ -2332,6 +2384,12 @@ ts.printSliders = function () {
         x(d) !== undefined &&
         x(d) !== null
     );
+
+    if (!fData || fData.length === 0) {
+      divOverview.innerHTML = ''; 
+      alert("No data available to display. Please load data.");
+      return; 
+    }
 
     let xDataType = typeof x(fData[0]);
 
