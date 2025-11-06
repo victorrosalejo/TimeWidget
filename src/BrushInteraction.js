@@ -321,6 +321,16 @@ function brushInteraction({
     return { hit: false };
   }
 
+  function getBrushResultWithNegation(resultSet, negate) {
+    if (!negate) {
+      return resultSet;
+    }
+    const allKeys = new Set(data.map((d) => d[0]));
+    for (const key of resultSet) {
+      allKeys.delete(key);
+    }
+    return allKeys;
+  }
 function brushFilter() {
     const newDataSelected = new Map();
 
@@ -353,7 +363,8 @@ function brushFilter() {
                 orBrushes.forEach(brush => {
                     const [[x0, y0], [x1, y1]] = brush.selection;
                     const results = (brush.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1);
-                    results.forEach(id => orResults.add(id));
+                    const finalResults = getBrushResultWithNegation(results, brush.negate);
+                    finalResults.forEach(id => orResults.add(id));
                 });
                  orResults.forEach(id => brushSelectedIds.add(id));
             }
@@ -361,14 +372,17 @@ function brushFilter() {
             if (andBrushes.length > 0) {
                 const firstAnd = andBrushes[0];
                 const [[x0, y0], [x1, y1]] = firstAnd.selection;
-                let andResults = new Set((firstAnd.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1));
+                let initialResults = new Set((firstAnd.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1));
+                let andResults = getBrushResultWithNegation(initialResults, firstAnd.negate);
 
                 for (let i = 1; i < andBrushes.length; i++) {
                     if (andResults.size === 0) break;
                     const brush = andBrushes[i];
                     const [[x0_i, y0_i], [x1_i, y1_i]] = brush.selection;
+
                     const currentResults = new Set((brush.mode === BrushModes.Contains) ? BVH_.contains(x0_i, y0_i, x1_i, y1_i) : BVH_.intersect(x0_i, y0_i, x1_i, y1_i));
-                    andResults = new Set([...andResults].filter(id => currentResults.has(id)));
+                    const finalCurrentResults = getBrushResultWithNegation(currentResults, brush.negate);
+                    andResults = new Set([...andResults].filter(id => finalCurrentResults.has(id)));
                 }
                 
                 if (orBrushes.length === 0) {
