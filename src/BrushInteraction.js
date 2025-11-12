@@ -34,6 +34,7 @@ function brushInteraction({
   getProbePairBoxes,
   getSliders,
   getYAtX,
+  printSlidersCallback = () => {},
 }) {
   let me = {},
     brushSize,
@@ -124,13 +125,23 @@ function brushInteraction({
     ]);
   }
 
-  function onContextMenuChange(mode, aggregation, not, brush) {
-    brush[1].mode = mode;
-    brush[1].aggregation = aggregation;
-    brush[1].negate = not;
-    updateBrush(brush);
-    brushFilter();
-    drawBrushes();
+  function onContextMenuChange(mode, aggregation, not, entity) {
+    if (Array.isArray(entity) && entity.length === 2) {
+      const brush = entity;
+      brush[1].mode = mode;
+      brush[1].aggregation = aggregation;
+      brush[1].negate = not;
+      updateBrush(brush);
+      brushFilter();
+      drawBrushes();
+    } else if (entity && entity.rcId !== undefined) {
+      const slider = entity;
+      slider.mode = mode;
+      slider.aggregation = aggregation;
+      slider.negate = not;
+      brushFilter();
+      printSlidersCallback();
+    }
   }
 
   const onBrushStart = (e, brushObject) => {
@@ -307,6 +318,139 @@ function brushInteraction({
     return false;
   }
 
+  function isTimelineFullyInSliderCurtain(timelinePolyline, slider, refCurve) {
+    const sliderMinX = +slider.leftX;
+    const sliderMaxX = +slider.rightX;
+
+    const yDomain = scaleY.domain();
+    const yBoundary = slider.side === "above" ? yDomain[1] : yDomain[0];
+    const yRefLeft = getYAtX(refCurve, sliderMinX);
+    const yRefRight = getYAtX(refCurve, sliderMaxX);
+
+    if (yRefLeft === null || yRefRight === null) return false;
+
+    const refSegmentPoints = refCurve.data.filter(
+      (p) => +p[0] >= sliderMinX && +p[0] <= sliderMaxX
+    );
+
+    const curtainPolygon = [];
+    const refCurveBoundary = []; // Store just the ref-curve part
+
+    const startPt = [sliderMinX, yRefLeft];
+    curtainPolygon.push(startPt);
+    refCurveBoundary.push(startPt);
+
+    refSegmentPoints.forEach((p) => {
+      const pt = [+p[0], p[1]];
+      curtainPolygon.push(pt);
+      refCurveBoundary.push(pt);
+    });
+
+    const endPt = [sliderMaxX, yRefRight];
+    curtainPolygon.push(endPt);
+    refCurveBoundary.push(endPt);
+
+    // These are the top/bottom boundary points
+    const boundaryPt1 = [sliderMaxX, yBoundary];
+    const boundaryPt2 = [sliderMinX, yBoundary];
+    curtainPolygon.push(boundaryPt1);
+    curtainPolygon.push(boundaryPt2);
+
+    // This is the top/bottom "horizontal" boundary segment
+    const horizontalBoundary = [boundaryPt1, boundaryPt2];
+
+    // --- Logic Check ---
+    let hasLeftPoint = false;
+    let hasRightPoint = false;
+
+    for (const p of timelinePolyline) {
+      const px = +x(p);
+      const py = y(p);
+
+      if (px < sliderMinX) {
+        hasLeftPoint = true;
+      } else if (px > sliderMaxX) {
+        hasRightPoint = true;
+      } else {
+        // Point is within slider's X-range.
+        // Check if it's outside the curtain (crosses horizontal boundary)
+        if (!d3.polygonContains(curtainPolygon, [px, py])) {
+          return false; // Fails Rule 2 (point check)
+        }
+      }
+    }
+
+    // If it doesn't even span across, it's not "contained"
+    if (!hasLeftPoint || !hasRightPoint) {
+      return false;
+    }
+
+    // Check segments for horizontal crossings
+    for (let i = 0; i < timelinePolyline.length - 1; i++) {
+      const p1 = [+x(timelinePolyline[i]), y(timelinePolyline[i])];
+      const p2 = [+x(timelinePolyline[i + 1]), y(timelinePolyline[i + 1])];
+
+      // We only care about segments that are at least partially inside the slider's X-range
+      const p1_x = p1[0];
+      const p2_x = p2[0];
+
+      // Check if segment is at least partially inside the X range
+      const segmentInRange =
+        (p1_x >= sliderMinX && p1_x <= sliderMaxX) || // p1 is inside
+        (p2_x >= sliderMinX && p2_x <= sliderMaxX) || // p2 is inside
+        (p1_x < sliderMinX && p2_x > sliderMinX) || // crosses left boundary
+        (p1_x > sliderMaxX && p2_x < sliderMaxX) || // crosses right boundary
+        (p1_x < sliderMaxX && p2_x > sliderMaxX) || // crosses right boundary
+        (p1_x > sliderMinX && p2_x < sliderMinX); // crosses left boundary
+
+      if (!segmentInRange) {
+        continue; // This segment is entirely outside the X-range, skip it
+      }
+
+      // Check intersection with top/bottom boundary
+      const topIntersectData = segmentIntersect(
+        p1,
+        p2,
+        horizontalBoundary[0],
+        horizontalBoundary[1]
+      );
+      if (topIntersectData.hit) {
+        // Check if the intersection point is within the slider's X-range
+        const intersectionPoint = topIntersectData.point;
+        if (
+          intersectionPoint[0] >= sliderMinX &&
+          intersectionPoint[0] <= sliderMaxX
+        ) {
+          return false; // Fails Rule 2 (segment check on top/bottom)
+        }
+      }
+
+      // Check intersection with ref-curve boundary
+      for (let j = 0; j < refCurveBoundary.length - 1; j++) {
+        const ref_p1 = refCurveBoundary[j];
+        const ref_p2 = refCurveBoundary[j + 1];
+
+        // We only check for intersection if the timeline segment is not identical
+        // to the ref_curve segment (which would be a 'touch' not a 'cross')
+        if (
+          p1[0] === ref_p1[0] &&
+          p1[1] === ref_p1[1] &&
+          p2[0] === ref_p2[0] &&
+          p2[1] === ref_p2[1]
+        ) {
+          continue;
+        }
+
+        if (segmentIntersect(p1, p2, ref_p1, ref_p2).hit) {
+          return false; // Fails Rule 2 (segment check on ref curve)
+        }
+      }
+    }
+
+    // If all checks passed (spans across, no points or segments crossed horizontal boundaries)
+    return true;
+  }
+
   function segmentIntersect(a, b, c, d) {
     const r = [b[0] - a[0], b[1] - a[1]];
     const s = [d[0] - c[0], d[1] - c[1]];
@@ -334,137 +478,178 @@ function brushInteraction({
 function brushFilter() {
     const newDataSelected = new Map();
 
-    const sliderBoxes = (typeof getProbePairBoxes === "function" ? getProbePairBoxes() : []) || [];
+    // Get all programmatic filter data once
+    const sliderBoxes =
+      (typeof getProbePairBoxes === "function" ? getProbePairBoxes() : []) || [];
     const getSlidersFunc = me.getSliders || (() => new Map());
     const sliders = getSlidersFunc();
     const dataDomainCurves = referenceCurves || [];
-    
-    const bvh = (BVH_ && typeof BVH_.getBvh === "function") ? BVH_.getBvh() : BVH_;
-    const curvesFromBvh = (bvh && Array.isArray(bvh.referenceLines)) ? bvh.referenceLines : [];
-   
+    const bvh =
+      BVH_ && typeof BVH_.getBvh === "function" ? BVH_.getBvh() : BVH_;
+    const curvesFromBvh =
+      bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
+
     for (const [groupId, group] of brushesGroup.entries()) {
-        // --- 1. Calcular selecciones de TIMEBOXES ---
-        const brushSelectedIds = new Set();
-        // Verificamos si hay al menos un timebox definido para este grupo
-        const hasActiveTimeboxes = Array.from(group.brushes.values()).some(brush => brush.selection);
-        
-        if (group.isEnable && hasActiveTimeboxes) {
-            const andBrushes = [];
-            const orBrushes = [];
+      const finalSelectedIds = new Set();
+      const andFilters = [];
+      const orFilters = [];
 
-            group.brushes.forEach(brush => {
-                if (brush.selection) {
-                    (brush.aggregation === BrushAggregation.And ? andBrushes : orBrushes).push(brush);
-                }
-            });
-            
-            if (orBrushes.length > 0) {
-                const orResults = new Set();
-                orBrushes.forEach(brush => {
-                    const [[x0, y0], [x1, y1]] = brush.selection;
-                    const results = (brush.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1);
-                    const finalResults = getBrushResultWithNegation(results, brush.negate);
-                    finalResults.forEach(id => orResults.add(id));
-                });
-                 orResults.forEach(id => brushSelectedIds.add(id));
-            }
+      // --- 1. Collect ALL filters for this group ---
 
-            if (andBrushes.length > 0) {
-                const firstAnd = andBrushes[0];
-                const [[x0, y0], [x1, y1]] = firstAnd.selection;
-                let initialResults = new Set((firstAnd.mode === BrushModes.Contains) ? BVH_.contains(x0, y0, x1, y1) : BVH_.intersect(x0, y0, x1, y1));
-                let andResults = getBrushResultWithNegation(initialResults, firstAnd.negate);
-
-                for (let i = 1; i < andBrushes.length; i++) {
-                    if (andResults.size === 0) break;
-                    const brush = andBrushes[i];
-                    const [[x0_i, y0_i], [x1_i, y1_i]] = brush.selection;
-
-                    const currentResults = new Set((brush.mode === BrushModes.Contains) ? BVH_.contains(x0_i, y0_i, x1_i, y1_i) : BVH_.intersect(x0_i, y0_i, x1_i, y1_i));
-                    const finalCurrentResults = getBrushResultWithNegation(currentResults, brush.negate);
-                    andResults = new Set([...andResults].filter(id => finalCurrentResults.has(id)));
-                }
-                
-                if (orBrushes.length === 0) {
-                     andResults.forEach(id => brushSelectedIds.add(id));
-                } else {
-                     andResults.forEach(id => brushSelectedIds.add(id));
-                }
-            }
-        }
-
-        // --- 2. Calcular selecciones de SLIDERS y PUNTOS ---
-        const programmaticSelectedIds = new Set();
-        const slidersForGroup = sliderBoxes.filter(s => s.groupId === groupId);
-        let hasActiveProgrammaticFilters = slidersForGroup.length > 0;
-
-        if (slidersForGroup.length > 0) {
-            let sliderIntersectionSet = new Set();
-
-            slidersForGroup.forEach((sliderInfo, index) => {
-                const currentSliderSelection = new Set();
-                const slider = sliders.get(sliderInfo.sliderId);
-                if (!slider) return;
-
-                const refCurve = dataDomainCurves.find((rc) => rc.id === slider.rcId);
-                if (!refCurve) return;
-
-                const [[x0, y0], [x1, y1]] = sliderInfo.box;
-                const candidateIds = BVH_.intersect(x0, y0, x1, y1);
-                
-                for (const id of candidateIds) {
-                    const timeline = dataMap.get(id);
-                    if (timeline && timeline[1] && isTimelineInSliderCurtain(timeline[1], slider, refCurve)) {
-                        currentSliderSelection.add(id);
-                    }
-                }
-
-                if (index === 0) {
-                    sliderIntersectionSet = currentSliderSelection;
-                } else {
-                    sliderIntersectionSet = new Set([...sliderIntersectionSet].filter(id => currentSliderSelection.has(id)));
-                }
-            });
-
-            sliderIntersectionSet.forEach(id => programmaticSelectedIds.add(id));
-        }
-
-        curvesFromBvh.forEach((rcFromBvh) => {
-            if (rcFromBvh.isSimplePoints && Array.isArray(rcFromBvh.associations) && Array.isArray(rcFromBvh.collisions)) {
-                rcFromBvh.associations.forEach(assoc => {
-                    if (assoc.enabled && assoc.id === groupId) {
-                        hasActiveProgrammaticFilters = true; // Marcamos que hay un filtro programático activo
-                        rcFromBvh.collisions.forEach(collision => {
-                            programmaticSelectedIds.add(collision.dataId);
-                        });
-                    }
-                });
-            }
+      // Collect Timeboxes
+      if (group.isEnable) {
+        group.brushes.forEach((brush) => {
+          if (brush.selection) {
+            const filter = {
+              aggregation: brush.aggregation,
+              getResults: () => {
+                const [[x0, y0], [x1, y1]] = brush.selection;
+                const results =
+                  brush.mode === BrushModes.Contains
+                    ? BVH_.contains(x0, y0, x1, y1)
+                    : BVH_.intersect(x0, y0, x1, y1);
+                // NOT se aplica aquí, al resultado individual
+                return getBrushResultWithNegation(results, brush.negate);
+              },
+            };
+            (brush.aggregation === BrushAggregation.And
+              ? andFilters
+              : orFilters
+            ).push(filter);
+          }
         });
+      }
 
-        // --- 3. Combinar los resultados con la LÓGICA CORRECTA ---
-        let finalSelectedIds = new Set();
+      // Collect Sliders
+      const slidersForGroup = sliderBoxes.filter((s) => s.groupId === groupId);
+      slidersForGroup.forEach((sliderInfo) => {
+        const slider = sliders.get(sliderInfo.sliderId);
+        if (slider) {
+          const filter = {
+            aggregation: slider.aggregation,
+            getResults: () => {
+              const refCurve = dataDomainCurves.find(
+                (rc) => rc.id === slider.rcId
+              );
+              if (!refCurve) return new Set();
+              const [[x0, y0], [x1, y1]] = sliderInfo.box;
+              let candidateIds = BVH_.intersect(x0, y0, x1, y1);
 
-        if (hasActiveTimeboxes && hasActiveProgrammaticFilters) {
-            // Si AMBOS tipos de filtro están activos, hacemos la INTERSECCIÓN.
-            finalSelectedIds = new Set([...brushSelectedIds].filter(id => programmaticSelectedIds.has(id)));
-        } else if (hasActiveTimeboxes) {
-            // Si SOLO hay timeboxes activos, usamos sus resultados.
-            finalSelectedIds = brushSelectedIds;
-        } else if (hasActiveProgrammaticFilters) {
-            // Si SOLO hay sliders/puntos activos, usamos sus resultados.
-            finalSelectedIds = programmaticSelectedIds;
+              const singleSliderResult = new Set();
+              for (const id of candidateIds) {
+                const timeline = dataMap.get(id);
+                if (!timeline || !timeline[1]) continue;
+                let inCurtain =
+                  slider.mode === BrushModes.Contains
+                    ? isTimelineFullyInSliderCurtain(
+                        timeline[1],
+                        slider,
+                        refCurve
+                      )
+                    : isTimelineInSliderCurtain(timeline[1], slider, refCurve);
+                if (inCurtain) singleSliderResult.add(id);
+              }
+              // NOT se aplica aquí, al resultado individual
+              return getBrushResultWithNegation(
+                singleSliderResult,
+                slider.negate
+              );
+            },
+          };
+          (slider.aggregation === BrushAggregation.And
+            ? andFilters
+            : orFilters
+          ).push(filter);
         }
-        
-        const groupSelection = [];
-        finalSelectedIds.forEach(id => {
-            if (dataMap.has(id)) {
-                groupSelection.push(dataMap.get(id));
-            }
-        });
-        newDataSelected.set(groupId, groupSelection);
-    }
+      });
 
+      // Collect Points
+      curvesFromBvh.forEach((rcFromBvh) => {
+        if (
+          rcFromBvh.isSimplePoints &&
+          Array.isArray(rcFromBvh.associations) &&
+          Array.isArray(rcFromBvh.collisions)
+        ) {
+          rcFromBvh.associations.forEach((assoc) => {
+            if (assoc.enabled && assoc.id === groupId) {
+              const aggregation = assoc.aggregation || BrushAggregation.Or;
+              const filterList =
+                aggregation === BrushAggregation.And ? andFilters : orFilters;
+
+              filterList.push({
+                aggregation: aggregation,
+                getResults: () => {
+                  const pointResults = new Set();
+                  rcFromBvh.collisions.forEach((collision) => {
+                    pointResults.add(collision.dataId);
+                  });
+                  // NOT se aplica aquí, al resultado individual
+                  return getBrushResultWithNegation(
+                    pointResults,
+                    assoc.negate || false
+                  );
+                },
+              });
+            }
+          });
+        }
+      });
+
+      // --- 2. Process the unified AND/OR filter lists ---
+
+      const orResults = new Set();
+      if (orFilters.length > 0) {
+        // Unir todos los resultados OR
+        orFilters.forEach((filter) => {
+          const filterResults = filter.getResults();
+          filterResults.forEach((id) => orResults.add(id));
+        });
+      }
+
+      let andResults = new Set();
+      let hasAndFilters = andFilters.length > 0;
+
+      if (hasAndFilters) {
+        // Intersectar todos los resultados AND
+        andResults = andFilters[0].getResults(); // Empezar con el primero
+        for (let i = 1; i < andFilters.length; i++) {
+          if (andResults.size === 0) break; // Optimización
+          const currentResults = andFilters[i].getResults();
+          andResults = new Set(
+            [...andResults].filter((id) => currentResults.has(id))
+          );
+        }
+      }
+
+      // --- 3. Combine AND and OR results ---
+      // (Esta es la lógica clave que tu escenario describe)
+      if (orFilters.length > 0) {
+        orResults.forEach((id) => finalSelectedIds.add(id));
+      }
+
+      if (hasAndFilters) {
+        if (orFilters.length === 0) {
+          // Solo hay filtros AND (como en tu escenario)
+          andResults.forEach((id) => finalSelectedIds.add(id));
+        } else {
+          // Hay filtros AND y OR
+          // El resultado es la UNIÓN de ambos conjuntos
+          andResults.forEach((id) => finalSelectedIds.add(id));
+          // (los 'orResults' ya se añadieron arriba)
+        }
+      }
+      
+      // --- 4. Populate newDataSelected ---
+      const groupSelection = [];
+      finalSelectedIds.forEach((id) => {
+        if (dataMap.has(id)) {
+          groupSelection.push(dataMap.get(id));
+        }
+      });
+      newDataSelected.set(groupId, groupSelection);
+    } // end for-loop over groups
+
+    // --- 5. Update global state ---
     const allSelectedIds = new Set();
     newDataSelected.forEach((items) => {
       items.forEach((item) => allSelectedIds.add(item[0]));
@@ -476,7 +661,7 @@ function brushFilter() {
     if (!suppress) {
       selectionCallback(dataSelected, dataNotSelected, hasAnySelection);
     }
-}
+  }
 
   function removeBrush([id, brush]) {
     brushSize--;
@@ -1413,6 +1598,10 @@ function brushFilter() {
   me.recomputeSelection = function () {
     brushFilter();
   };
+  me.getBrushSize = function () {
+      return brushSize;
+    };
+  me.contextMenu = brushContextMenu;
   return me;
 }
 

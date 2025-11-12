@@ -7,7 +7,7 @@ import { throttle } from "throttle-debounce";
 import TimelineDetails from "./TimelineDetails.js";
 import TimeLineOverview from "./TimeLineOverview";
 import brushInteraction from "./BrushInteraction";
-
+import { BrushAggregation, BrushModes } from "./utils.js";
 function TimeWidget(
   data,
   {
@@ -506,12 +506,23 @@ function renderReferenceCurvesWidget() {
                 <input type="checkbox" class="rc-visible-toggle" ${
                   rc.isVisible !== false ? "checked" : ""
                 }></input>
-                <span>${rc.name || rc.id}</span>
+                <input class="rc-name" style="border: none; outline: none; font-weight: bold; width: ${String(
+                  rc.name || rc.id
+                ).length + 1}ch;" value="${rc.name || rc.id}"></input>
                 ${actionButtonHTML} 
             </div>
             <div class="associations-list" style="margin-left: 20px; margin-top: 4px;"></div>
             <div class="sliders-list" style="margin-left: 20px; margin-top: 4px;"></div>
           `;
+
+        div
+          .select("input.rc-name")
+          .on("input", function () {
+            this.style.width = this.value.length + 1 + "ch";
+          })
+          .on("change", (evt) => {
+            rc.name = evt.target.value;
+          });
 
         div.select(".rc-visible-toggle").on("change", (e) => {
           rc.isVisible = e.target.checked;
@@ -542,10 +553,15 @@ function renderReferenceCurvesWidget() {
 
             d3.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
-                      <span>Slider${slider.id} (${groupName})</span>
-                      <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
-                        slider.groupId
-                      )}; margin: 0 5px; border: 1px solid #ccc;"></div>
+                      <input class="slider-name" style="border: none; outline: none; width: ${String(
+                        slider.name
+                      ).length + 1}ch;" value="${slider.name}"></input>
+                      <span style="margin-left: 2px;">(${groupName})</span>
+                      <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${
+                        computeBrushColor(
+                          slider.groupId
+                        )
+                      }; margin: 0 5px; border: 1px solid #ccc;"></div>
                       <button class="toggle-side-btn" title="Toggle position (above/below)" style="border: none; background: none; cursor: pointer; font-size: 1.1em; padding: 0 5px;">
                           ${slider.side === "above" ? "↓" : "↑"}
                       </button>
@@ -555,6 +571,15 @@ function renderReferenceCurvesWidget() {
                       <button class="remove-slider-btn" title="Remove Slider" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
+
+            d3.select(this)
+              .select("input.slider-name")
+              .on("input", function () {
+                this.style.width = this.value.length + 1 + "ch";
+              })
+              .on("change", (evt) => {
+                slider.name = evt.target.value;
+              });
 
             d3.select(this)
               .select(".toggle-side-btn")
@@ -588,21 +613,73 @@ function renderReferenceCurvesWidget() {
             if (assoc.userEnabled === undefined) {
               assoc.userEnabled = assoc.enabled;
             }
+            if (assoc.aggregation === undefined) {
+              assoc.aggregation = BrushAggregation.And;
+            }
+            if (assoc.negate === undefined) {
+              assoc.negate = false; 
+            }
+
             const group = brushes.getBrushesGroup().get(assoc.id);
             const groupName = group ? group.name : "...";
+            const uniqueId = `rc-${rc.id}-assoc-${assoc.id}`;
 
             d3.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
-                      <span>Association (${groupName})</span>
+                      <span>(${groupName})</span>
                       <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
                         assoc.id
                       )}; margin: 0 5px; border: 1px solid #ccc;"></div>
+                      
+                      <div style="font-size: 0.9em; margin-right: 5px;">
+                        <input type="radio" id="${uniqueId}-and" name="${uniqueId}-agg" value="and" 
+                          ${
+                            assoc.aggregation === BrushAggregation.And
+                              ? "checked"
+                              : ""
+                          }>
+                        <label for="${uniqueId}-and" style="cursor: pointer;">AND</label>
+                        
+                        <input type="radio" id="${uniqueId}-or" name="${uniqueId}-agg" value="or" 
+                          ${
+                            assoc.aggregation === BrushAggregation.Or
+                              ? "checked"
+                              : ""
+                          }>
+                        <label for="${uniqueId}-or" style="cursor: pointer;">OR</label>
+                      </div>
+
+                      <div style="font-size: 0.9em; margin-right: 5px; padding-left: 5px; border-left: 1px solid #ccc;">
+                        <input type="checkbox" id="${uniqueId}-not" name="${uniqueId}-not" 
+                          ${assoc.negate ? "checked" : ""}>
+                        <label for="${uniqueId}-not" style="cursor: pointer;">NOT</label>
+                      </div>
                       <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
                         assoc.userEnabled ? "checked" : ""
                       }></input>
                       <button class="remove-assoc-btn" title="Remove Association" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
+
+            d3.select(this)
+              .select(`#${uniqueId}-and`)
+              .on("change", () => {
+                assoc.aggregation = BrushAggregation.And;
+                brushes.recomputeSelection();
+              });
+            d3.select(this)
+              .select(`#${uniqueId}-or`)
+              .on("change", () => {
+                assoc.aggregation = BrushAggregation.Or;
+                brushes.recomputeSelection();
+              });
+            
+            d3.select(this)
+              .select(`#${uniqueId}-not`)
+              .on("change", (e) => {
+                assoc.negate = e.target.checked;
+                brushes.recomputeSelection();
+              });
 
             d3.select(this)
               .select(".assoc-enabled-toggle")
@@ -767,6 +844,7 @@ function renderReferenceCurvesWidget() {
     const sliderId = ++sliderSeq;
     sliders.set(sliderId, {
       id: sliderId,
+      name: `Slider ${sliderId}`,
       rcId: rcId,
       groupId: groupId,
       side: "above",
@@ -774,6 +852,9 @@ function renderReferenceCurvesWidget() {
       userEnabled: true,
       leftX: leftX,
       rightX: rightX,
+      mode: BrushModes.Intersect,
+      aggregation: BrushAggregation.And,
+      negate: false,
     });
 
     brushes.recomputeSelection();
@@ -1103,6 +1184,7 @@ function renderReferenceCurvesWidget() {
       getProbePairBoxes: () => ts.getActiveSliderBoxes(), // <-- Ya hiciste este cambio
       getSliders: () => sliders,
       getYAtX: getYAtX,
+      printSlidersCallback: () => ts.printSliders(),
     });
 
     gGroupBrushes
@@ -1646,8 +1728,9 @@ function updateSliderVisuals(gSlider, slider) {
         .attr("y1", yCurvePx)
         .attr("x2", xPx)
         .attr("y2", yEndPx)
-        .attr("stroke", groupColor);
-
+        .attr("stroke", slider.negate ? "red" : groupColor)
+        .attr("stroke-width", slider.aggregation === BrushAggregation.Or ? 3 : 2)
+        .attr("stroke-dasharray", slider.mode === BrushModes.Intersect ? "4" : null);
       gHandle
         .select(".slider-line-border")
         .attr("x1", xPx)
@@ -1697,7 +1780,32 @@ function updateSliderVisuals(gSlider, slider) {
     const bottomPx = overviewY(yMin);
     const x0p = overviewX(slider.leftX);
     const x1p = overviewX(slider.rightX);
+    const mainStrokeColor = slider.negate ? "red" : groupColor;
+    const mainStrokeDash = slider.mode === BrushModes.Intersect ? "4" : null;
 
+    const yHorizontal = (slider.side === "above") ? topPx : bottomPx;
+    
+    gSlider.select(".slider-horizontal-border")
+        .attr("x1", x0p)
+        .attr("y1", yHorizontal)
+        .attr("x2", x1p)
+        .attr("y2", yHorizontal);
+
+    gSlider.select(".slider-horizontal-main")
+        .attr("x1", x0p)
+        .attr("y1", yHorizontal)
+        .attr("x2", x1p)
+        .attr("y2", yHorizontal)
+        .attr("stroke", mainStrokeColor)
+        .attr("stroke-dasharray", mainStrokeDash);
+
+    gSlider.select(".slider-curve-border")
+        .attr("d", curvePathData);
+        
+    gSlider.select(".slider-curve-main")
+        .attr("d", curvePathData)
+        .attr("stroke", mainStrokeColor)
+        .attr("stroke-dasharray", mainStrokeDash);
     let pathString;
     if (slider.side === "above") {
       pathString = `M ${x0p},${topPx} L ${x0p},${overviewY(
@@ -1714,7 +1822,8 @@ function updateSliderVisuals(gSlider, slider) {
     gSlider
       .select(".slider-background")
       .attr("d", pathString)
-      .attr("fill", groupColor);
+      .attr("fill", groupColor)
+      .attr("opacity", slider.negate ? 0.25 : 0.15);
 }
 
 
@@ -1735,8 +1844,30 @@ ts.printSliders = function () {
 
     const enter = sel.enter().append("g").attr("class", "slider-group");
     
-    enter.append("path").attr("class", "slider-background").attr("opacity", 0.15).style("pointer-events", "none");
+    enter.append("path").attr("class", "slider-background").attr("opacity", 0.15); // MODIFICADO: pointer-events se maneja abajo
+enter.append("line") 
+        .attr("class", "slider-horizontal-border")
+        .attr("stroke", "#333") 
+        .attr("stroke-width", "4px") 
+        .attr("stroke-opacity", 0.5)
+        .style("pointer-events", "none");
+    enter.append("line") 
+        .attr("class", "slider-horizontal-main")
+        .attr("stroke-width", "2px") 
+        .style("pointer-events", "none");
 
+    enter.append("path")
+        .attr("class", "slider-curve-border")
+        .attr("stroke", "#333") 
+        .attr("stroke-width", "4px") 
+        .attr("stroke-opacity", 0.5)
+        .style("fill", "none")
+        .style("pointer-events", "none");
+    enter.append("path")
+        .attr("class", "slider-curve-main")
+        .attr("stroke-width", "2px") 
+        .style("fill", "none")
+        .style("pointer-events", "none");
     ["left", "right"].forEach((which) => {
         const gSide = enter.append("g").attr("class", `handle-${which}`);
         gSide.append("line")
@@ -1765,6 +1896,29 @@ ts.printSliders = function () {
 
     all.each(function (slider) {
         const gSlider = d3.select(this);
+        gSlider.select(".slider-background")
+            .style("pointer-events", "all") 
+            .on("contextmenu", (sourceEvent) => {
+                sourceEvent.preventDefault();
+                const contextMenu = brushes.contextMenu;
+                if (!contextMenu) return;
+                const [px, py] = d3.pointer(sourceEvent); 
+                contextMenu.__show(
+                  slider.mode, 
+                  slider.aggregation, 
+                  slider.negate, 
+                  px,  
+                  py,  
+                  slider
+                );
+            })
+            .on("dblclick", (e) => {
+                e.preventDefault();
+                slider.side = slider.side === "above" ? "below" : "above";
+                updateSliderVisuals(gSlider, slider); 
+                brushes.recomputeSelection(); 
+            });
+
         const minGap = domainDxFromPixels(5);
 
         const updateSliderPositionAndVisuals = (which, newX) => {
@@ -1805,6 +1959,25 @@ ts.printSliders = function () {
                     slider.side = slider.side === "above" ? "below" : "above";
                     updateSliderVisuals(gSlider, slider);
                     recompute();
+                })
+                .on("contextmenu", (sourceEvent) => {
+                    sourceEvent.preventDefault();
+                    const contextMenu = brushes.contextMenu;
+                    if (!contextMenu) return;
+                    const xDom = which === "left" ? slider.leftX : slider.rightX;
+                    const px = overviewX(xDom);
+                    const ref = getRefCurveById(slider.rcId);
+                    const yCurve = getYAtX(ref, +xDom);
+                    const py = (yCurve !== null) ? overviewY(yCurve) : sourceEvent.pageY;
+
+                    contextMenu.__show(
+                      slider.mode, 
+                      slider.aggregation, 
+                      slider.negate, 
+                      px, 
+                      py, 
+                      slider 
+                    );
                 });
         });
         
