@@ -1700,7 +1700,6 @@ function renderReferenceCurvesWidget() {
 
     // log(" Bins computed", medianBrushGroups);
   }
-
 function updateSliderVisuals(gSlider, slider) {
     if (gSlider.empty()) return;
 
@@ -1708,6 +1707,15 @@ function updateSliderVisuals(gSlider, slider) {
     if (!ref) return;
     
     const groupColor = computeBrushColor(slider.groupId);
+    const isOrAggregation = slider.aggregation === BrushAggregation.Or;
+
+    const mainStrokeColor = groupColor; 
+    const mainStrokeDash = slider.mode === BrushModes.Intersect ? "4" : null;
+
+    const notShadowColor = slider.negate ? "red" : "#333";
+    const notShadowWidth = slider.negate ? 8 : 4; // Exagerado si es NOT
+    const notShadowOpacity = slider.negate ? 0.6 : 0.5; // Más opaco si es NOT
+
 
     const drawHandle = (which) => {
       const xDom = which === "left" ? slider.leftX : slider.rightX;
@@ -1728,15 +1736,18 @@ function updateSliderVisuals(gSlider, slider) {
         .attr("y1", yCurvePx)
         .attr("x2", xPx)
         .attr("y2", yEndPx)
-        .attr("stroke", slider.negate ? "red" : groupColor)
-        .attr("stroke-width", slider.aggregation === BrushAggregation.Or ? 3 : 2)
-        .attr("stroke-dasharray", slider.mode === BrushModes.Intersect ? "4" : null);
+        .attr("stroke", mainStrokeColor)
+        .attr("stroke-width", 2) 
+        .attr("stroke-dasharray", mainStrokeDash);
       gHandle
         .select(".slider-line-border")
         .attr("x1", xPx)
         .attr("y1", yCurvePx)
         .attr("x2", xPx)
-        .attr("y2", yEndPx);
+        .attr("y2", yEndPx)
+        .attr("stroke", isOrAggregation ? groupColor : "#333")
+        .attr("stroke-width", isOrAggregation ? 8 : 4) 
+        .attr("stroke-opacity", isOrAggregation ? 0.6 : 0.5);
 
       gHandle
         .select(".slider-hit-area")
@@ -1780,16 +1791,16 @@ function updateSliderVisuals(gSlider, slider) {
     const bottomPx = overviewY(yMin);
     const x0p = overviewX(slider.leftX);
     const x1p = overviewX(slider.rightX);
-    const mainStrokeColor = slider.negate ? "red" : groupColor;
-    const mainStrokeDash = slider.mode === BrushModes.Intersect ? "4" : null;
-
     const yHorizontal = (slider.side === "above") ? topPx : bottomPx;
     
     gSlider.select(".slider-horizontal-border")
         .attr("x1", x0p)
         .attr("y1", yHorizontal)
         .attr("x2", x1p)
-        .attr("y2", yHorizontal);
+        .attr("y2", yHorizontal)
+        .attr("stroke", notShadowColor)
+        .attr("stroke-width", notShadowWidth)
+        .attr("stroke-opacity", notShadowOpacity);
 
     gSlider.select(".slider-horizontal-main")
         .attr("x1", x0p)
@@ -1797,14 +1808,19 @@ function updateSliderVisuals(gSlider, slider) {
         .attr("x2", x1p)
         .attr("y2", yHorizontal)
         .attr("stroke", mainStrokeColor)
+        .attr("stroke-width", 2)
         .attr("stroke-dasharray", mainStrokeDash);
 
     gSlider.select(".slider-curve-border")
-        .attr("d", curvePathData);
+        .attr("d", curvePathData)
+        .attr("stroke", notShadowColor)
+        .attr("stroke-width", notShadowWidth)
+        .attr("stroke-opacity", notShadowOpacity);
         
     gSlider.select(".slider-curve-main")
         .attr("d", curvePathData)
         .attr("stroke", mainStrokeColor)
+        .attr("stroke-width", 2)
         .attr("stroke-dasharray", mainStrokeDash);
     let pathString;
     if (slider.side === "above") {
@@ -1824,8 +1840,7 @@ function updateSliderVisuals(gSlider, slider) {
       .attr("d", pathString)
       .attr("fill", groupColor)
       .attr("opacity", slider.negate ? 0.25 : 0.15);
-}
-
+  }
 
 ts.printSliders = function () {
     if (!overviewX || !overviewY || !gProbes) return;
