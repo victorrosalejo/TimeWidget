@@ -5287,6 +5287,15 @@ function renderReferenceCurvesWidget() {
                 <input type="checkbox" class="rc-visible-toggle" ${
                   rc.isVisible !== false ? "checked" : ""
                 }></input>
+                
+                <div title="Curve Color" style="
+                  width: 12px; height: 12px; 
+                  background-color: ${rc.color || '#000'}; 
+                  margin: 0 5px; 
+                  border: 1px solid #ccc;
+                  flex-shrink: 0;">
+                </div>
+
                 <input class="rc-name" style="border: none; outline: none; font-weight: bold; width: ${String(
                   rc.name || rc.id
                 ).length + 1}ch;" value="${rc.name || rc.id}"></input>
@@ -6640,8 +6649,12 @@ ts.printSliders = function () {
 
     const enter = sel.enter().append("g").attr("class", "slider-group");
     
-    enter.append("path").attr("class", "slider-background").attr("opacity", 0.15); // MODIFICADO: pointer-events se maneja abajo
-enter.append("line") 
+    enter.append("path")
+         .attr("class", "slider-background")
+         .attr("opacity", 0.15)
+         .style("cursor", "grab");
+
+    enter.append("line") 
         .attr("class", "slider-horizontal-border")
         .attr("stroke", "#333") 
         .attr("stroke-width", "4px") 
@@ -6685,13 +6698,18 @@ enter.append("line")
             .style("cursor", "ew-resize");
         gSide
             .append("title")
-            .text("Drag to move. Double-click to toggle side (above/below).");
+            .text("Drag to move edge. Double-click to toggle side (above/below).");
     });
 
     const all = enter.merge(sel);
 
+    const throttledRecompute = throttle(200, () => {
+        brushes.recomputeSelection();
+    });
+
     all.each(function (slider) {
         const gSlider = d3.select(this);
+        const ref = getRefCurveById(slider.rcId);
         gSlider.select(".slider-background")
             .style("pointer-events", "all") 
             .on("contextmenu", (sourceEvent) => {
@@ -6710,16 +6728,46 @@ enter.append("line")
             })
             .on("dblclick", (e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 slider.side = slider.side === "above" ? "below" : "above";
                 updateSliderVisuals(gSlider, slider); 
                 brushes.recomputeSelection(); 
-            });
+            })
+            .call(d3.drag()
+                .on("start", function() {
+                    d3.select(this).style("cursor", "grabbing");
+                })
+                .on("drag", (e) => {
+                    if (!ref) return;
+                    const dx = e.dx;
+                    domainDxFromPixels(dx); 
+
+                    const currentLeftPx = overviewX(slider.leftX);
+                    const currentRightPx = overviewX(slider.rightX);
+                    
+                    const newLeftDomain = overviewX.invert(currentLeftPx + dx);
+                    const newRightDomain = overviewX.invert(currentRightPx + dx);
+
+                    const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
+                    
+                    if (+newLeftDomain >= minRefX && +newRightDomain <= maxRefX) {
+                        slider.leftX = newLeftDomain;
+                        slider.rightX = newRightDomain;
+                        
+                        updateSliderVisuals(gSlider, slider);
+                        throttledRecompute();
+                    }
+                })
+                .on("end", function() {
+                    d3.select(this).style("cursor", "grab");
+                    brushes.recomputeSelection(); 
+                })
+            );
 
         const minGap = domainDxFromPixels(5);
 
-        const updateSliderPositionAndVisuals = (which, newX) => {
-            const xDom = overviewX.invert(newX);
-            const ref = getRefCurveById(slider.rcId);
+        const updateSingleEdge = (which, newXPixel) => {
+            const xDom = overviewX.invert(newXPixel);
             if (!ref) return;
 
             const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
@@ -6736,28 +6784,28 @@ enter.append("line")
             updateSliderVisuals(gSlider, slider);
         };
 
-        const recompute = () => brushes.recomputeSelection();
-        const fastVisualUpdate = throttle(16, updateSliderPositionAndVisuals);
-
         ["left", "right"].forEach(which => {
             gSlider.select(`.handle-${which} .slider-hit-area`)
                 .call(d3.drag()
                     .on("drag", (e) => {
-                        fastVisualUpdate(which, e.x);
+                        updateSingleEdge(which, e.x); 
+                        throttledRecompute();
                     })
                     .on("end", (e) => {
-                        updateSliderPositionAndVisuals(which, e.x);
-                        recompute();
+                        updateSingleEdge(which, e.x);
+                        brushes.recomputeSelection();
                     })
                 )
                 .on("dblclick", (e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     slider.side = slider.side === "above" ? "below" : "above";
                     updateSliderVisuals(gSlider, slider);
-                    recompute();
+                    brushes.recomputeSelection();
                 })
                 .on("contextmenu", (sourceEvent) => {
                     sourceEvent.preventDefault();
+                    sourceEvent.stopPropagation();
                     const contextMenu = brushes.contextMenu;
                     if (!contextMenu) return;
                     const xDom = which === "left" ? slider.leftX : slider.rightX;
