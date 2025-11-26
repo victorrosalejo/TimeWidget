@@ -209,16 +209,9 @@ function BVH({
         });
     }
 
-    // Si no hay puntos de referencia activos, no hay nada que hacer.
-    if (allRefPoints.length === 0) {
-        // Aún así, procesamos las colisiones de polilíneas si las hubiera
-        // (Este bloque se puede añadir si también se necesita la lógica de línea vs línea)
-        return [];
-    }
-
-    // 2. Iterar sobre cada punto de referencia individualmente.
+    // 2. Iterar sobre puntos 
     allRefPoints.forEach(refPoint => {
-        if (refPoint.epsilon <= 0) return; // Si no hay tolerancia, no hay área que comprobar.
+        if (refPoint.epsilon <= 0) return; 
 
         // 3. Calcular el área de búsqueda en píxeles.
         const epsilon_data = refPoint.epsilon;
@@ -259,20 +252,7 @@ function BVH({
                     const b = poly[k];
                     const distance = pointSegmentDistance(refPoint.point, a, b);
 
-// Convertimos la distancia en píxeles a su equivalente en unidades de datos del eje Y
-const distancia_en_datos = Math.abs(scaleY.invert(0) - scaleY.invert(distance));
-
-console.log({
-    "Tolerancia en Datos (eje Y)": epsilon_data,
-    "Distancia en Datos (eje Y)": distancia_en_datos,
-    "---": "---", // Separador para claridad
-    "Tolerancia en Píxeles (radio)": epsilon_px,
-    "Distancia Calculada (en píxeles)": distance,
-    "--- ": "---", // Separador para claridad
-    "Colisión Detectada": distance <= epsilon_px
-});
                     if (distance <= epsilon_px) {
-                        // Colisión encontrada. La registramos.
                         if (!collisions.has(refPoint.id)) collisions.set(refPoint.id, new Map());
                         const byData = collisions.get(refPoint.id);
                         if (!byData.has(dataKey)) byData.set(dataKey, new Map());
@@ -294,28 +274,33 @@ console.log({
 
     // 7. Formatear el resultado final (sin cambios en esta parte).
     const result = [];
-    for (const [refId, byData] of collisions) {
-        const entry = {
-            refId,
-            isSimplePoints: !!refMeta.get(refId) && refMeta.get(refId).isSimplePoints,
-            collisions: [],
-        };
-        for (const [dataId, hitsMap] of byData) {
-            entry.collisions.push({
-                dataId,
-                count: hitsMap.size,
-                hits: Array.from(hitsMap.values()),
-            });
-        }
-        result.push(entry);
-    }
     
-    result.forEach((refResult) => {
-        const ref = BVH.referenceLines.find((r) => r.id === refResult.refId);
-        if (ref && refResult.collisions.length > 0) {
-            ref.collisions = refResult.collisions;
-        }
-    });
+    if (BVH.referenceLines) {
+        BVH.referenceLines.forEach((ref) => {
+            if (collisions.has(ref.id)) {
+                const byData = collisions.get(ref.id);
+                const formattedCollisions = [];
+                for (const [dataId, hitsMap] of byData) {
+                    formattedCollisions.push({
+                        dataId,
+                        count: hitsMap.size,
+                        hits: Array.from(hitsMap.values()),
+                    });
+                }
+                ref.collisions = formattedCollisions;
+            } else {
+                ref.collisions = [];
+            }
+
+            if (ref.collisions.length > 0) {
+                 result.push({
+                    refId: ref.id,
+                    isSimplePoints: ref.isSimplePoints,
+                    collisions: ref.collisions
+                });
+            }
+        });
+    }
 
     return result;
   }

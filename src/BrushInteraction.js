@@ -580,10 +580,10 @@ function brushFilter() {
                 aggregation: aggregation,
                 getResults: () => {
                   const pointResults = new Set();
-                  rcFromBvh.collisions.forEach((collision) => {
+                  const currentCollisions = Array.isArray(rcFromBvh.collisions) ? rcFromBvh.collisions : [];
+                  currentCollisions.forEach((collision) => {
                     pointResults.add(collision.dataId);
                   });
-                  // NOT se aplica aquí, al resultado individual
                   return getBrushResultWithNegation(
                     pointResults,
                     assoc.negate || false

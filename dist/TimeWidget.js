@@ -1945,16 +1945,9 @@ function BVH({
         });
     }
 
-    // Si no hay puntos de referencia activos, no hay nada que hacer.
-    if (allRefPoints.length === 0) {
-        // Aún así, procesamos las colisiones de polilíneas si las hubiera
-        // (Este bloque se puede añadir si también se necesita la lógica de línea vs línea)
-        return [];
-    }
-
-    // 2. Iterar sobre cada punto de referencia individualmente.
+    // 2. Iterar sobre puntos 
     allRefPoints.forEach(refPoint => {
-        if (refPoint.epsilon <= 0) return; // Si no hay tolerancia, no hay área que comprobar.
+        if (refPoint.epsilon <= 0) return; 
 
         // 3. Calcular el área de búsqueda en píxeles.
         const epsilon_data = refPoint.epsilon;
@@ -1995,20 +1988,7 @@ function BVH({
                     const b = poly[k];
                     const distance = pointSegmentDistance(refPoint.point, a, b);
 
-// Convertimos la distancia en píxeles a su equivalente en unidades de datos del eje Y
-const distancia_en_datos = Math.abs(scaleY.invert(0) - scaleY.invert(distance));
-
-console.log({
-    "Tolerancia en Datos (eje Y)": epsilon_data,
-    "Distancia en Datos (eje Y)": distancia_en_datos,
-    "---": "---", // Separador para claridad
-    "Tolerancia en P\xEDxeles (radio)": epsilon_px,
-    "Distancia Calculada (en p\xEDxeles)": distance,
-    "--- ": "---", // Separador para claridad
-    "Colisi\xF3n Detectada": distance <= epsilon_px
-});
                     if (distance <= epsilon_px) {
-                        // Colisión encontrada. La registramos.
                         if (!collisions.has(refPoint.id)) collisions.set(refPoint.id, new Map());
                         const byData = collisions.get(refPoint.id);
                         if (!byData.has(dataKey)) byData.set(dataKey, new Map());
@@ -2030,28 +2010,33 @@ console.log({
 
     // 7. Formatear el resultado final (sin cambios en esta parte).
     const result = [];
-    for (const [refId, byData] of collisions) {
-        const entry = {
-            refId,
-            isSimplePoints: !!refMeta.get(refId) && refMeta.get(refId).isSimplePoints,
-            collisions: [],
-        };
-        for (const [dataId, hitsMap] of byData) {
-            entry.collisions.push({
-                dataId,
-                count: hitsMap.size,
-                hits: Array.from(hitsMap.values()),
-            });
-        }
-        result.push(entry);
-    }
     
-    result.forEach((refResult) => {
-        const ref = BVH.referenceLines.find((r) => r.id === refResult.refId);
-        if (ref && refResult.collisions.length > 0) {
-            ref.collisions = refResult.collisions;
-        }
-    });
+    if (BVH.referenceLines) {
+        BVH.referenceLines.forEach((ref) => {
+            if (collisions.has(ref.id)) {
+                const byData = collisions.get(ref.id);
+                const formattedCollisions = [];
+                for (const [dataId, hitsMap] of byData) {
+                    formattedCollisions.push({
+                        dataId,
+                        count: hitsMap.size,
+                        hits: Array.from(hitsMap.values()),
+                    });
+                }
+                ref.collisions = formattedCollisions;
+            } else {
+                ref.collisions = [];
+            }
+
+            if (ref.collisions.length > 0) {
+                 result.push({
+                    refId: ref.id,
+                    isSimplePoints: ref.isSimplePoints,
+                    collisions: ref.collisions
+                });
+            }
+        });
+    }
 
     return result;
   }
@@ -3926,10 +3911,10 @@ function brushFilter() {
                 aggregation: aggregation,
                 getResults: () => {
                   const pointResults = new Set();
-                  rcFromBvh.collisions.forEach((collision) => {
+                  const currentCollisions = Array.isArray(rcFromBvh.collisions) ? rcFromBvh.collisions : [];
+                  currentCollisions.forEach((collision) => {
                     pointResults.add(collision.dataId);
                   });
-                  // NOT se aplica aquí, al resultado individual
                   return getBrushResultWithNegation(
                     pointResults,
                     assoc.negate || false
@@ -5305,19 +5290,19 @@ function renderReferenceCurvesWidget() {
           ? `<button class="add-association-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Association</button>`
           : `<button class="add-slider-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Slider</button>`;
 
+        const hexColor = d3__namespace.color(rc.color || "#000000").formatHex();
         div.node().innerHTML = `
             <div style="display: flex; align-items: center; font-weight: bold;">
                 <input type="checkbox" class="rc-visible-toggle" ${
                   rc.isVisible !== false ? "checked" : ""
                 }></input>
                 
-                <div title="Curve Color" style="
-                  width: 12px; height: 12px; 
-                  background-color: ${rc.color || '#000'}; 
-                  margin: 0 5px; 
-                  border: 1px solid #ccc;
+                <input type="color" class="rc-color-picker" value="${hexColor}" title="Change Curve Color" style="
+                  width: 20px; height: 20px; 
+                  border: none; padding: 0; background: none;
+                  margin: 0 5px; cursor: pointer;
                   flex-shrink: 0;">
-                </div>
+                </input>
 
                 <input class="rc-name" style="border: none; outline: none; font-weight: bold; width: ${String(
                   rc.name || rc.id
@@ -5327,6 +5312,12 @@ function renderReferenceCurvesWidget() {
             <div class="associations-list" style="margin-left: 20px; margin-top: 4px;"></div>
             <div class="sliders-list" style="margin-left: 20px; margin-top: 4px;"></div>
           `;
+
+        div.select(".rc-color-picker").on("input", (e) => {
+             rc.color = e.target.value;
+             ts.printReferenceCurves(referenceCurves); 
+             ts.printSliders(); 
+        });
 
         div
           .select("input.rc-name")
@@ -5366,6 +5357,10 @@ function renderReferenceCurvesWidget() {
 
             d3__namespace.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <input type="checkbox" class="slider-enabled-toggle" title="Enable/Disable Slider" ${
+                        slider.userEnabled ? "checked" : ""
+                      } style="margin-right: 5px;"></input>
+                      
                       <input class="slider-name" style="border: none; outline: none; width: ${String(
                         slider.name
                       ).length + 1}ch;" value="${slider.name}"></input>
@@ -5378,9 +5373,7 @@ function renderReferenceCurvesWidget() {
                       <button class="toggle-side-btn" title="Toggle position (above/below)" style="border: none; background: none; cursor: pointer; font-size: 1.1em; padding: 0 5px;">
                           ${slider.side === "above" ? "\u2193" : "\u2191"}
                       </button>
-                      <input type="checkbox" class="slider-enabled-toggle" title="Enable/Disable Slider" ${
-                        slider.userEnabled ? "checked" : ""
-                      }></input>
+                      
                       <button class="remove-slider-btn" title="Remove Slider" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
@@ -5439,6 +5432,10 @@ function renderReferenceCurvesWidget() {
 
             d3__namespace.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
+                        assoc.userEnabled ? "checked" : ""
+                      } style="margin-right: 5px;"></input>
+
                       <span>(${groupName})</span>
                       <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
                         assoc.id
@@ -5467,9 +5464,7 @@ function renderReferenceCurvesWidget() {
                           ${assoc.negate ? "checked" : ""}>
                         <label for="${uniqueId}-not" style="cursor: pointer;">NOT</label>
                       </div>
-                      <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
-                        assoc.userEnabled ? "checked" : ""
-                      }></input>
+                      
                       <button class="remove-assoc-btn" title="Remove Association" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
@@ -5994,7 +5989,7 @@ function renderReferenceCurvesWidget() {
       groupsCallback: onBrushGroupsChange,
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
       referenceCurves: referenceCurves,
-      getProbePairBoxes: () => ts.getActiveSliderBoxes(), // <-- Ya hiciste este cambio
+      getProbePairBoxes: () => ts.getActiveSliderBoxes(),
       getSliders: () => sliders,
       getYAtX: getYAtX,
       printSlidersCallback: () => ts.printSliders(),
@@ -6726,9 +6721,20 @@ ts.printSliders = function () {
 
     const all = enter.merge(sel);
 
-    const throttledRecompute = throttle(200, () => {
+    const totalLines = groupedData ? groupedData.length : 0;
+    const isHeavyMode = totalLines > 30000;
+    const calculatedDelay = Math.min(300, 30 + Math.floor(totalLines / 20));
+    const throttledRecompute = throttle(calculatedDelay, () => {
         brushes.recomputeSelection();
     });
+
+    const handleDragComputation = () => {
+        if (isHeavyMode) {
+            return;
+        } else {
+            throttledRecompute();
+        }
+    };
 
     all.each(function (slider) {
         const gSlider = d3__namespace.select(this);
@@ -6763,11 +6769,8 @@ ts.printSliders = function () {
                 .on("drag", (e) => {
                     if (!ref) return;
                     const dx = e.dx;
-                    domainDxFromPixels(dx); 
-
                     const currentLeftPx = overviewX(slider.leftX);
                     const currentRightPx = overviewX(slider.rightX);
-                    
                     const newLeftDomain = overviewX.invert(currentLeftPx + dx);
                     const newRightDomain = overviewX.invert(currentRightPx + dx);
 
@@ -6778,7 +6781,7 @@ ts.printSliders = function () {
                         slider.rightX = newRightDomain;
                         
                         updateSliderVisuals(gSlider, slider);
-                        throttledRecompute();
+                        handleDragComputation();
                     }
                 })
                 .on("end", function() {
@@ -6812,7 +6815,7 @@ ts.printSliders = function () {
                 .call(d3__namespace.drag()
                     .on("drag", (e) => {
                         updateSingleEdge(which, e.x); 
-                        throttledRecompute();
+                        handleDragComputation();
                     })
                     .on("end", (e) => {
                         updateSingleEdge(which, e.x);
@@ -7311,7 +7314,7 @@ ts.printReferenceCurves = function (curves) {
     const lineCurves = visible.filter((c) => !c.isSimplePoints);
     const pointCurves = visible.filter((c) => c.isSimplePoints);
 
-    // DIBUJA LAS LÍNEAS (sin cambios aquí)
+
     const line2 = d3__namespace
       .line()
       .defined((d) => d[1] !== undefined && d[1] !== null)
