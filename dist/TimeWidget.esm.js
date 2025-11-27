@@ -6699,16 +6699,13 @@ ts.printSliders = function () {
     const all = enter.merge(sel);
 
     const totalLines = groupedData ? groupedData.length : 0;
-    const isHeavyMode = totalLines > 30000;
     const calculatedDelay = Math.min(300, 30 + Math.floor(totalLines / 20));
     const throttledRecompute = throttle(calculatedDelay, () => {
         brushes.recomputeSelection();
     });
 
     const handleDragComputation = () => {
-        if (isHeavyMode) {
-            return;
-        } else {
+        if (ts.autoUpdate) {
             throttledRecompute();
         }
     };
