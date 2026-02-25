@@ -18,9 +18,8 @@ function BVH({
   scaleY
 }) {
   let me = {};
-  let BVH = makeBVH();
-  console.log("BVH Created", BVH);
   const unclampedScaleY = scaleY.copy().clamp(false);
+  let BVH = makeBVH();
 
   function pupulateBVHPolylines(data, BVH, Rcurve) {
     let xinc = BVH.xinc;
@@ -227,7 +226,7 @@ function BVH({
         };
 
         // 4. Usar la caja de búsqueda para obtener todas las celdas del BVH relevantes.
-        const [[initI, finI], [initJ, finJ]] = getCollidingCells(searchBox.x0, searchBox.y0, searchBox.x1, searchBox.y1);
+        const [[initI, finI], [initJ, finJ]] = getCollidingCells(searchBox.x0, searchBox.y0, searchBox.x1, searchBox.y1, BVH);
 
         // 5. Recopilar todas las líneas de datos únicas de esas celdas para evitar comprobaciones repetidas.
         const candidatePolylines = new Map();
@@ -466,55 +465,92 @@ function BVH({
 
   //Calculate the intersection with the first vertical line of the box.
   function intersectX0(initPoint, finalPoint, x0, y0, x1, y1) {
-    let intersectX0 =
-      (initPoint[0] <= x0 && finalPoint[0] >= x0) ||
-      (initPoint[0] >= x0 && finalPoint[0] <= x0);
-    if (intersectX0) {
-      let m = (finalPoint[1] - initPoint[1]) / (finalPoint[0] - initPoint[0]);
-      let y = m * (x0 - initPoint[0]) + initPoint[1];
-      return y >= y0 && y <= y1;
+    if (
+      (initPoint[0] < x0 && finalPoint[0] < x0) ||
+      (initPoint[0] > x0 && finalPoint[0] > x0)
+    )
+      return false;
+    let dx = finalPoint[0] - initPoint[0];
+    if (Math.abs(dx) < 1e-10) {
+      return (
+        initPoint[0] === x0 &&
+        Math.max(initPoint[1], finalPoint[1]) >= y0 &&
+        Math.min(initPoint[1], finalPoint[1]) <= y1
+      );
     }
-    return false;
+    let m = (finalPoint[1] - initPoint[1]) / dx;
+    let y = m * (x0 - initPoint[0]) + initPoint[1];
+    return y >= y0 && y <= y1;
   }
 
   function intersectX1(initPoint, finalPoint, x0, y0, x1, y1) {
-    let intersectX1 =
-      (initPoint[0] <= x1 && finalPoint[0]) >= x1 ||
-      (initPoint[0] >= x1 && finalPoint[0] <= x1);
-    if (intersectX1) {
-      let m = (finalPoint[1] - initPoint[1]) / (finalPoint[0] - initPoint[0]);
-      let y = m * (x1 - initPoint[0]) + initPoint[1];
-      return y >= y0 && y <= y1;
+    if (
+      (initPoint[0] < x1 && finalPoint[0] < x1) ||
+      (initPoint[0] > x1 && finalPoint[0] > x1)
+    )
+      return false;
+    let dx = finalPoint[0] - initPoint[0];
+    if (Math.abs(dx) < 1e-10) {
+      return (
+        initPoint[0] === x1 &&
+        Math.max(initPoint[1], finalPoint[1]) >= y0 &&
+        Math.min(initPoint[1], finalPoint[1]) <= y1
+      );
     }
-    return false;
+    let m = (finalPoint[1] - initPoint[1]) / dx;
+    let y = m * (x1 - initPoint[0]) + initPoint[1];
+    return y >= y0 && y <= y1;
   }
 
   function intersectY0(initPoint, finalPoint, x0, y0, x1, y1) {
-    let intersectY0 =
-      (initPoint[1] <= y0 && finalPoint[1] >= y0) ||
-      (initPoint[1] >= y0 && finalPoint[1] <= y0);
-    if (intersectY0) {
-      let m = (finalPoint[1] - initPoint[1]) / (finalPoint[0] - initPoint[0]);
-      let x = (y0 - initPoint[1]) / m + initPoint[0];
-      return x >= x0 && x <= x1;
+    if (
+      (initPoint[1] < y0 && finalPoint[1] < y0) ||
+      (initPoint[1] > y0 && finalPoint[1] > y0)
+    )
+      return false;
+    let dy = finalPoint[1] - initPoint[1];
+    if (Math.abs(dy) < 1e-10) {
+      return (
+        initPoint[1] === y0 &&
+        Math.max(initPoint[0], finalPoint[0]) > x0 &&
+        Math.min(initPoint[0], finalPoint[0]) < x1
+      );
     }
-    return false;
+    let dx = finalPoint[0] - initPoint[0];
+    if (Math.abs(dx) < 1e-10) {
+      return initPoint[0] > x0 && initPoint[0] < x1;
+    }
+    let m = dy / dx;
+    let x = (y0 - initPoint[1]) / m + initPoint[0];
+    return x > x0 && x < x1;
   }
 
   function intersectY1(initPoint, finalPoint, x0, y0, x1, y1) {
-    let intersectY1 =
-      (initPoint[1] >= y1 && finalPoint[1] <= y1) ||
-      (initPoint[1] <= y1 && finalPoint[1] >= y1);
-    if (intersectY1) {
-      let m = (finalPoint[1] - initPoint[1]) / (finalPoint[0] - initPoint[0]);
-      let x = (y1 - initPoint[1]) / m + initPoint[0];
-      return x >= x0 && x <= x1;
+    if (
+      (initPoint[1] < y1 && finalPoint[1] < y1) ||
+      (initPoint[1] > y1 && finalPoint[1] > y1)
+    )
+      return false;
+    let dy = finalPoint[1] - initPoint[1];
+    if (Math.abs(dy) < 1e-10) {
+      return (
+        initPoint[1] === y1 &&
+        Math.max(initPoint[0], finalPoint[0]) > x0 &&
+        Math.min(initPoint[0], finalPoint[0]) < x1
+      );
     }
-    return false;
+    let dx = finalPoint[0] - initPoint[0];
+    if (Math.abs(dx) < 1e-10) {
+      return initPoint[0] > x0 && initPoint[0] < x1;
+    }
+    let m = dy / dx;
+    let x = (y1 - initPoint[1]) / m + initPoint[0];
+    return x > x0 && x < x1;
   }
 
   function lineIntersection(line, x0, y0, x1, y1) {
     let initPoint = line[0];
+    if (pointIntersection(initPoint, x0, y0, x1, y1)) return true;
 
     for (let index = 1; index < line.length; ++index) {
       let finalPoint = line[index];
@@ -522,57 +558,49 @@ function BVH({
       if (intersectX1(initPoint, finalPoint, x0, y0, x1, y1)) return true;
       if (intersectY0(initPoint, finalPoint, x0, y0, x1, y1)) return true;
       if (intersectY1(initPoint, finalPoint, x0, y0, x1, y1)) return true;
+      if (pointIntersection(finalPoint, x0, y0, x1, y1)) return true;
       initPoint = finalPoint;
     }
-    return pointIntersection(initPoint, x0, y0, x1, y1);
+    return false;
   }
 
   function containIntersection(line, x0, y0, x1, y1) {
     let initPoint = line[0];
     let finalPoint = line[line.length - 1];
-    let isIntersectX0 = false;
-    let isIntersectX1 = false;
 
     if (initPoint[0] < x0 && finalPoint[0] < x0) return undefined;
     if (initPoint[0] > x1 && finalPoint[0] > x1) return undefined;
 
     for (let index = 1; index < line.length; ++index) {
       let finalPoint = line[index];
-      if (isIntersectX0 || intersectX0(initPoint, finalPoint, x0, y0, x1, y1))
-        isIntersectX0 = true;
-      if (isIntersectX1 || intersectX1(initPoint, finalPoint, x0, y0, x1, y1))
-        isIntersectX1 = true;
       if (intersectY0(initPoint, finalPoint, x0, y0, x1, y1)) return false;
       if (intersectY1(initPoint, finalPoint, x0, y0, x1, y1)) return false;
       initPoint = finalPoint;
     }
 
-    let isAllLineInside = !isIntersectX0 && !isIntersectX1;
-    if (isAllLineInside) {
-      return pointIntersection(line[0], x0, y0, x1, y1);
-    }
-
-    return true;
+    return line[0][1] >= y0 && line[0][1] <= y1;
   }
 
   // Returns the range of cells that collide with the given box. The result is of the form [[InitI,EndI],[INiJ, EndJ]]]
-  function getCollidingCells(x0, y0, x1, y1) {
-    if (x1 > BVH.width || y1 > BVH.height || x0 < 0 || y0 < 0)
+  // bvhRef: optional explicit BVH object (used when called before the outer BVH variable is initialized)
+  function getCollidingCells(x0, y0, x1, y1, bvhRef) {
+    const b = bvhRef || BVH;
+    if (x1 > b.width || y1 > b.height || x0 < 0 || y0 < 0)
       log("👁️ BVH is called off limits", [
         [x0, y0],
         [x1, y1],
       ]);
 
-    // Esure that the coordinates are in the limits oh the BVH
-    x1 = Math.min(x1, BVH.width - 1);
-    y1 = Math.min(y1, BVH.height - 1);
+    // Ensure that the coordinates are in the limits of the BVH
+    x1 = Math.min(x1, b.width - 1);
+    y1 = Math.min(y1, b.height - 1);
     x0 = Math.max(x0, 0);
     y0 = Math.max(y0, 0);
 
-    let initI = Math.floor(x0 / BVH.xinc);
-    let finI = Math.floor(x1 / BVH.xinc);
-    let initJ = Math.floor(y0 / BVH.yinc);
-    let finJ = Math.floor(y1 / BVH.yinc);
+    let initI = Math.floor(x0 / b.xinc);
+    let finI = Math.floor(x1 / b.xinc);
+    let initJ = Math.floor(y0 / b.yinc);
+    let finJ = Math.floor(y1 / b.yinc);
     return [
       [initI, finI],
       [initJ, finJ],
