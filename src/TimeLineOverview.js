@@ -227,7 +227,7 @@ function TimeLineOverview({
       const transformedMedians = medians.map(median => {
         const groupId = median[0];
         const points = median[1];
-        const transformedPoints = points.map(p => [+x(p), +y(p)]);
+        const transformedPoints = points.map(p => [p[0], p[1]]);
         return [groupId, transformedPoints];
       });
       

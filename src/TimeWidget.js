@@ -1678,7 +1678,7 @@ function renderReferenceCurvesWidget() {
   }
 
   function getBrushGroupsMedians(data) {
-    if (!brushes.hasSelection()) return;
+    if (!data || data.size === 0) return;
     let minX = +overviewX.domain()[0];
     let maxX = +overviewX.domain()[1];
 
