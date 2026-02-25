@@ -1,5 +1,6 @@
 import * as d3 from "d3";
 import { darken } from "./utils.js";
+import WebGPURenderer from "./WebGPURenderer.js";
 
 function TimeLineOverview({
   ts,
@@ -11,7 +12,11 @@ function TimeLineOverview({
   groupAttr,
 }) {
   let me = {};
-  let paths, overviewX, overviewY;
+  let overviewX, overviewY;
+  let renderer = new WebGPURenderer();
+  let isWebGPUReady = false;
+  let lastRenderArgs = null; 
+  let rawData = [];
 
   const divOverview = d3
     .select(element)
@@ -22,189 +27,113 @@ function TimeLineOverview({
     .style("left", "0px")
     .style("background-color", ts.backgroundColor);
 
-  let line = d3.line()
-    .defined((d) => y(d) !== undefined && y(d) !== null);
-  
-  let linem = d3.line();
+  const innerWidth = width - ts.margin.left - ts.margin.right;
+  const innerHeight = height - ts.margin.top - ts.margin.bottom;
 
   const canvas = divOverview
     .selectAll("canvas")
     .data([1])
     .join("canvas")
-    .attr("height", height * window.devicePixelRatio)
-    .attr("width", width * window.devicePixelRatio)
+    .attr("height", innerHeight * window.devicePixelRatio)
+    .attr("width", innerWidth * window.devicePixelRatio)
     .style("position", "absolute")
     .style("z-index", "-1")
     .style("top", `${ts.margin.top}px`)
     .style("left", `${ts.margin.left}px`)
-    .style("width", `${width}px`)
-    .style("height", `${height}px`)
+    .style("width", `${innerWidth}px`)
+    .style("height", `${innerHeight}px`)
     .style("pointer-events", "none");
 
-  const context = canvas.node().getContext("2d");
-  context.scale(window.devicePixelRatio, window.devicePixelRatio);
-  //context.globalCompositeOperation = "lighter";
+  // Initialize WebGPU
+  renderer.init(canvas.node()).then((success) => {
+      if (success) {
+          isWebGPUReady = true;
+          if (overviewX && overviewY) {
+               updateRendererScales();
+          }
+          if (rawData.length > 0) {
+              uploadDataToRenderer();
+          }
+          if (lastRenderArgs) {
+              me.render(...lastRenderArgs);
+          }
+      } else {
+          console.error("Failed to initialize WebGPU Renderer");
+      }
+  });
+
 
   me.data = function (data) {
-    paths = new Map();
+    rawData = [];
+    me.idToIndex = new Map();
+    
+    let index = 0;
     data.forEach((d) => {
-      let group = groupAttr ? groupAttr(d[1][0]) : null;
-      let pathObject = { path: new Path2D(line(d[1])), group: group };
-      paths.set(d[0], pathObject);
+        const id = d[0];
+        const points = d[1];
+        
+        const group = (groupAttr && typeof groupAttr === 'function') ? groupAttr(points[0]) : null;
+        let baseColorStr = ts.defaultColor;
+        if (groupAttr && typeof groupAttr === 'function') {
+            baseColorStr = ts.colorScale(group);
+        }
+        const baseVec = d3ColorToVec4(baseColorStr);
+
+        rawData.push({ 
+            id: id, 
+            dataItems: points, 
+            group: group,
+            baseVec: baseVec
+        });
+        
+        me.idToIndex.set(id, index++);
     });
+
+    if (isWebGPUReady) {
+        uploadDataToRenderer();
+    }
   };
+
+  function uploadDataToRenderer() {
+      const processedData = rawData.map(entry => {
+          const points = entry.dataItems.map(p => [+x(p), +y(p)]);
+          return { id: entry.id, points: points };
+      });
+      
+      renderer.uploadData(processedData);
+  }
 
   me.setScales = function ({ scaleX, scaleY }) {
     overviewX = scaleX;
     overviewY = scaleY;
 
-    line = line.x((d) => overviewX(+x(d))).y((d) => overviewY(y(d)));
-    linem = linem.x((d) => overviewX(d[0])).y((d) => overviewY(d[1]));
+    if (isWebGPUReady) {
+        updateRendererScales();
+    }
   };
 
-  function renderOvwerview(
-    dataSelected,
-    groupSelected,
-    dataNotSelected,
-    medians,
-    hasSelection
-  ) {
-    dataNotSelected = dataNotSelected ? dataNotSelected : [];
-    context.clearRect(0, 0, canvas.node().width, canvas.node().height);
+  function updateRendererScales() {
+      const xDomain = overviewX.domain();
+      const yDomain = overviewY.domain();
+      
+      const minX = xDomain[0] instanceof Date ? xDomain[0].getTime() : xDomain[0];
+      const maxX = xDomain[1] instanceof Date ? xDomain[1].getTime() : xDomain[1];
 
-    if (!hasSelection) {
-      // Render all
-      renderOverviewCanvasSubset(
-        dataNotSelected,
-        ts.defaultAlpha,
-        ts.defaultColor
+      const innerWidth = width - ts.margin.left - ts.margin.right;
+      const innerHeight = height - ts.margin.top - ts.margin.bottom;
+
+      renderer.updateUniforms(
+          { x: [minX, maxX], y: [yDomain[0], yDomain[1]] },
+          innerWidth, 
+          innerHeight,
+          {top:0, left:0, right:0, bottom:0}
       );
-    } else {
-      context.lineWidth = 1;
-
-      // Render Non selected
-      renderOverviewCanvasSubset(
-        dataNotSelected,
-        ts.noSelectedAlpha,
-        ts.noSelectedColor
-      );
-
-      dataSelected.forEach((data, group) => {
-        if (group !== groupSelected) {
-          let selectedColor = computeColor(group);
-          // console.log(
-          //   "Render selected selectedColor",
-          //   selectedColor,
-          //   group
-          // );
-
-          // Render selected
-          renderOverviewCanvasSubset(
-            data,
-            ts.selectedAlpha,
-            selectedColor.toString(),
-            group
-          );
-        }
-      });
-
-      renderOverviewCanvasSubset(
-        dataSelected.get(groupSelected),
-        ts.selectedAlpha,
-        computeColor(groupSelected).toString(),
-        groupSelected
-      );
-
-      // TODO configs for this
-      /*childSelections.forEach((selection, childIx) => {
-      if (childPosition !== childIx) {
-        let selection = childSelections[childIx];
-        selection.forEach((group, id) => {
-          let color = d3.hsl(ts.brushesColorScale(id));
-          color.s = 1;
-          color.l = lums[childIx]; //initLum + LStep * (childSelections.length - 1 - childIx);
-          renderOverviewCanvasSubset(group, ts.selectedAlpha, color);
-        });
-      }
-    }); */
-
-      context.save();
-      // Render group Medians
-      if (medians) {
-        context.lineWidth = ts.medianLineWidth;
-        context.globalAlpha = ts.medianLineAlpha;
-
-        medians.forEach((d) => {
-          if (!d[1]) {
-            console.log("Error drawing medians, empty data", d);
-            return;
-          }
-          let path = new Path2D(linem(d[1]));
-          context.setLineDash(ts.medianLineDash);
-          context.strokeStyle = darken(computeColor(d[0]));
-          context.stroke(path);
-        });
-      }
-      context.restore();
-    }
   }
 
-  function computeColor(groupId) {
-    return ts.brushesColorScale(groupId);
-  }
-
-  // Pass a groupId when rendering a highlighted selection for a group
-  function renderOverviewCanvasSubset(
-    dataSubset,
-    alpha,
-    color,
-    groupId = null
-  ) {
-    if (!dataSubset) {
-      console.log("🚫 Error renderOverviewCanvasSubset called with no dataSubset", dataSubset);
-      return;
-    }
-
-    //context.save();
-    // Compute the transparency with respect to the number of lines drawn
-    // Min 0.05, then adjust by the expected alpha divided by 10% of the number of lines
-    // context.globalAlpha = 0.05 + alpha / (dataSubset.length * 0.1);
-    context.globalAlpha = alpha * ts.alphaScale(dataSubset.length);
-
-    
-
-    for (let d of dataSubset) {
-      let path = paths.get(d[0]);
-      if (!path) {
-        console.log("renderOverviewCanvasSubset error finding path", d[0], d);
-        return;
-      }
-      let strokeColor = color;
-      if (groupAttr) {
-        const baseGroupColor = ts.colorScale(path.group);
-        strokeColor = ts.selectedColorTransform(baseGroupColor, groupId);
-
-        // const { h, c, l, opacity } = d3.lch(baseGroupColor);
-        // strokeColor = d3.lch(l + ts.brushesColorScale(groupId), c, h, opacity);
-        // console.log(
-        //   "group",
-        //   groupId,
-
-        //   "baseGroupColor",
-        //   baseGroupColor,
-        //   h,
-        //   s,
-        //   l,
-        //   o,
-
-        //   "after",
-        //   strokeColor
-        // );
-      }
-      // context.strokeStyle = groupAttr ? ts.colorScale(path.group) : color;
-      context.strokeStyle = "" + strokeColor;
-      context.stroke(path.path);
-    }
+  function d3ColorToVec4(colorStr) {
+      const c = d3.color(colorStr);
+      if (!c) return [0, 0, 0, 0];
+      return [c.r / 255, c.g / 255, c.b / 255, c.opacity];
   }
 
   me.render = function (
@@ -214,13 +143,116 @@ function TimeLineOverview({
     medians,
     hasSelection
   ) {
-    renderOvwerview(
-      dataSelected,
-      groupSelected,
-      dataNotSelected,
-      medians,
-      hasSelection
-    );
+    if (!isWebGPUReady) {
+        lastRenderArgs = [dataSelected, groupSelected, dataNotSelected, medians, hasSelection];
+        return;
+    }
+    
+    const count = rawData.length;
+    const styleData = new Float32Array(count * 8);
+
+    const isVisible = dataNotSelected && dataNotSelected.length > 0;
+    const alpha = isVisible ? (hasSelection ? ts.noSelectedAlpha : ts.defaultAlpha) : 0;
+    
+    const useBaseColor = !hasSelection;
+    const noSelColor = useBaseColor ? null : d3ColorToVec4(ts.noSelectedColor);
+    
+    for (let i = 0; i < count; i++) {
+        const item = rawData[i];
+        const cv = useBaseColor ? item.baseVec : noSelColor;
+        
+        styleData[i*8 + 0] = cv[0];
+        styleData[i*8 + 1] = cv[1];
+        styleData[i*8 + 2] = cv[2];
+        styleData[i*8 + 3] = alpha;
+        styleData[i*8 + 4] = 0;     
+        styleData[i*8 + 7] = 0; // 0 = no -selected
+    }
+
+    if (hasSelection) {
+
+       
+           let groupCounter = 1;
+           const activeGroupId = groupSelected; // groupSelected es el id del agrupo activo
+
+           dataSelected.forEach((groupEntries, group) => {
+               if (group === activeGroupId) return;
+
+               const colStr = ts.brushesColorScale(group);
+               const colVec = d3ColorToVec4(colStr);
+               const selAlpha = ts.selectedAlpha;
+               const groupFlag = groupCounter++;
+
+               groupEntries.forEach((entry) => {
+                    const lineId = entry[0]; // Extract ID from entry [id, points]
+                    const idx = me.idToIndex.get(lineId);
+                    if (idx !== undefined) {
+                        styleData[idx*8 + 0] = colVec[0];
+                        styleData[idx*8 + 1] = colVec[1];
+                        styleData[idx*8 + 2] = colVec[2];
+                        styleData[idx*8 + 3] = selAlpha;
+                        styleData[idx*8 + 4] = 0; 
+                        styleData[idx*8 + 7] = groupFlag; 
+                    }
+               });
+           });
+
+           // grupos activos
+           if (activeGroupId !== undefined && dataSelected.has(activeGroupId)) {
+               const groupEntries = dataSelected.get(activeGroupId);
+               const colStr = ts.brushesColorScale(activeGroupId);
+               const colVec = d3ColorToVec4(colStr);
+               const selAlpha = ts.selectedAlpha;
+               const groupFlag = groupCounter++;
+
+               groupEntries.forEach((entry) => {
+                    const lineId = entry[0];
+                    const idx = me.idToIndex.get(lineId);
+                    if (idx !== undefined) {
+                        styleData[idx*8 + 0] = colVec[0];
+                        styleData[idx*8 + 1] = colVec[1];
+                        styleData[idx*8 + 2] = colVec[2]; 
+                        styleData[idx*8 + 3] = selAlpha;
+                        styleData[idx*8 + 4] = 0; 
+                        styleData[idx*8 + 7] = groupFlag; 
+                    }
+               });
+           }
+           ts.activeGroupCount = groupCounter - 1;
+    }
+    
+    renderer.updateStyles(styleData);
+    
+    if (medians && medians.length > 0) {
+      const transformedMedians = medians.map(median => {
+        const groupId = median[0];
+        const points = median[1];
+        const transformedPoints = points.map(p => [+x(p), +y(p)]);
+        return [groupId, transformedPoints];
+      });
+      
+      const medianStyles = new Map();
+      medians.forEach(median => {
+        const groupId = median[0];
+        const groupColor = ts.brushesColorScale(groupId);
+        const darkerColor = d3.color(groupColor).darker(1.5);
+        const colorVec = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255, 1.0];
+        
+        medianStyles.set(groupId, {
+          color: colorVec,
+          dashOn: ts.medianLineDash ? ts.medianLineDash[0] : 7,
+          dashOff: ts.medianLineDash ? ts.medianLineDash[0] : 7,
+          lineWidth: ts.medianLineWidth || 2
+        });
+      });
+
+      
+      renderer.uploadMedians(transformedMedians, medianStyles, ts.medianHalo !== false);
+    } else {
+      renderer.uploadMedians([], new Map());
+    }
+    
+    renderer.draw(hasSelection, ts.activeGroupCount || 0);
   };
 
   return me;

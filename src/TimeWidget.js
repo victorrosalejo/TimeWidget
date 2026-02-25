@@ -37,15 +37,18 @@ function TimeWidget(
     yTicks, //Allows to use custom strings as ticks on the y-axis independently of the y-scale. A vector of [yValue,Label] pairs is expected. Note that only the defined elements are displayed.
     filters = [], // Array of filters to use, format [[x1, y1], [x2, y2], ...]
     /* Color Configuration */
-    defaultAlpha = 0.7, // Default transparency (when no selection is active) of drawn lines
+    defaultAlpha = 1.0, // Default transparency (when no selection is active) of drawn lines
     selectedAlpha = 1.0, // Transparency of selected lines
-    noSelectedAlpha = 0.1, // Transparency of unselected lines
-    alphaScale = d3.scalePow().exponent(0.25).range([1, 1]), // A scale to adjust the alpha by the number of rendering elements
+    noSelectedAlpha = 1.0, // Transparency of unselected lines
+    alphaScale = d3.scaleLog()
+        .domain([1, 1000000])  
+        .range([0.8, 0.005])   
+        .clamp(true),          
     backgroundColor = "#ffffff",
-    defaultColor = "#aaa", // Default color (when no selection is active) of the drawn lines. It only has effect when "color" is not defined.
-    selectedColor = "#aaa", // Color of selected lines. It only has effect when "color" is not defined.
-    noSelectedColor = "#dce0e5", // Color of unselected lines. It only has effect when "color" is not defined.
-    colorScale = d3.scaleOrdinal(d3.schemeAccent), // The color scale to be used to display the different groups defined by the "color" attribute.
+    defaultColor = "#888888", // Default color (when no selection is active) of the drawn lines. It only has effect when "color" is not defined.
+    selectedColor = "#888888", // Color of selected lines. It only has effect when "color" is not defined.
+    noSelectedColor = "#888888", // Color of unselected lines. It only has effect when "color" is not defined.
+    colorScale = d3.scaleOrdinal(d3.schemeTableau10), // Modern default scale without an olive first color
     brushesColorScale = color
       ? d3.scaleOrdinal(d3.schemeGreys[3].toReversed())
       : d3.scaleOrdinal(d3.schemeTableau10), // The color scale to be used to display the brushes
@@ -81,6 +84,7 @@ function TimeWidget(
     medianLineWidth = 2, // Selected group median line width
     medianFn = d3.median, // Function to use when showing the median
     medianMinRecordsPerBin = 5, // Min number of records each bin must have to be considered
+    medianHalo = true, // If active show a halo around the median line
     autoUpdate = true, // Allows to decide whether changes in brushes are processed while moving, or only at the end of the movement.
     _this, // pass the object this in order to be able to maintain the state in case of changes in the input
     fixAxis, // When active, the axes will not change when modifying the data.
@@ -236,6 +240,7 @@ function TimeWidget(
   ts.medianLineDash = medianLineDash;
   ts.medianNumBins = medianNumBins;
   ts.medianFn = medianFn;
+  ts.medianHalo = medianHalo;
   ts.alphaScale = alphaScale;
   ts.medianMinRecordsPerBin = medianMinRecordsPerBin;
   ts.yScale = yScale;
@@ -458,26 +463,25 @@ function TimeWidget(
       .enter()
       .append("div")
       .attr("class", "nonSelectedControl")
-      .merge(nonSelectedContainer)
       .each(function () {
         this.innerHTML = `<div style="display: flex; align-items: center; margin-top: 5px;">
-                <input type="checkbox" id="checkBoxShowNonSelected" ${
-                  showNonSelected ? "checked" : ""
-                }></input>
-                <span>Non selected (<span id="nonSelectedCount">${
-                  renderNotSelected.length
-                }</span>)</span>
+                <input type="checkbox" id="checkBoxShowNonSelected"></input>
+                <span style="font-size: 0.9em; white-space: nowrap;">Non selected (<span id="nonSelectedCount">0</span>)</span>
             </div>`;
-        d3.select(this)
-          .select("#checkBoxShowNonSelected")
+        
+        const selection = d3.select(this);
+        selection.select("#checkBoxShowNonSelected")
           .on("change", (e) => {
             showNonSelected = e.target.checked;
             onSelectionChange();
           });
+      })
+      .merge(nonSelectedContainer)
+      .each(function () {
+        const selection = d3.select(this);
+        selection.select("#checkBoxShowNonSelected").property("checked", showNonSelected);
+        selection.select("#nonSelectedCount").text(renderNotSelected.length);
       });
-    d3.select(groupsElement)
-      .select("#nonSelectedCount")
-      .text(renderNotSelected.length);
   }
 function renderReferenceCurvesWidget() {
     const rcWidget = d3.select(target).select("#rcWidget");
@@ -520,8 +524,12 @@ function renderReferenceCurvesWidget() {
                 ).length + 1}ch;" value="${rc.name || rc.id}"></input>
                 ${actionButtonHTML} 
             </div>
-            <div class="associations-list" style="margin-left: 20px; margin-top: 4px;"></div>
-            <div class="sliders-list" style="margin-left: 20px; margin-top: 4px;"></div>
+            <div class="associations-list" style="margin-left: 20px; margin-top: 4px; display: ${
+              rc.isVisible !== false ? "block" : "none"
+            };"></div>
+            <div class="sliders-list" style="margin-left: 20px; margin-top: 4px; display: ${
+              rc.isVisible !== false ? "block" : "none"
+            };"></div>
           `;
 
         div.select(".rc-color-picker").on("input", (e) => {
@@ -1701,8 +1709,9 @@ function renderReferenceCurvesWidget() {
       for (let line of g[1]) {
         for (let point of line[1]) {
           let i = Math.floor((x(point) - minX) / binW);
-          i = i > ts.medianNumBins - 1 ? i - 1 : i;
-          bins[i].data.push(y(point));
+          i = i > ts.medianNumBins - 1 ? ts.medianNumBins - 1 : i;
+          if (i < 0) i = 0;
+          if (bins[i]) bins[i].data.push(y(point));
         }
       }
 
@@ -2073,15 +2082,54 @@ ts.printSliders = function () {
       const ref = getRefCurveById(slider.rcId);
       if (!ref || ref.isVisible === false) continue;
 
-      const [yMin, yMax] = overviewY.domain();
-      const topPx = overviewY(yMax);
-      const bottomPx = overviewY(yMin);
-
       const x0p = overviewX(slider.leftX);
       const x1p = overviewX(slider.rightX);
 
-      let y0p = topPx; // Desde la parte superior del gráfico
-      let y1p = bottomPx; // Hasta la parte inferior del gráfico
+      // Calculate Y-range based on reference curve within slider X-range
+      const yLeft = getYAtX(ref, slider.leftX);
+      const yRight = getYAtX(ref, slider.rightX);
+
+      if (yLeft === null || yRight === null) {
+        // Fallback to full Y-range if curve doesn't cover slider range
+        const [yMin, yMax] = overviewY.domain();
+        const y0p = overviewY(yMax);
+        const y1p = overviewY(yMin);
+        out.push({
+          groupId: slider.groupId,
+          box: [
+            [Math.min(x0p, x1p), Math.min(y0p, y1p)],
+            [Math.max(x0p, x1p), Math.max(y0p, y1p)],
+          ],
+          sliderId: slider.id,
+        });
+        continue;
+      }
+
+      // Find all curve points within slider X-range
+      const curveSegment = ref.data.filter(
+        (p) => p[0] >= slider.leftX && p[0] <= slider.rightX
+      );
+
+      // Get all Y values (endpoints + intermediate points)
+      const yValues = [yLeft, yRight, ...curveSegment.map((p) => p[1])].filter(
+        (v) => v !== null && v !== undefined
+      );
+      const yMinCurve = Math.min(...yValues);
+      const yMaxCurve = Math.max(...yValues);
+
+      // Expand to graph boundary based on slider side
+      const [yMin, yMax] = overviewY.domain();
+      let y0p, y1p;
+
+      if (slider.side === "above") {
+        // Curtain extends from curve UP to top of graph
+        y0p = overviewY(yMax); // Top of graph
+        y1p = overviewY(yMinCurve); // Minimum of curve segment
+      } else {
+        // Curtain extends from curve DOWN to bottom of graph
+        y0p = overviewY(yMaxCurve); // Maximum of curve segment
+        y1p = overviewY(yMin); // Bottom of graph
+      }
 
       out.push({
         groupId: slider.groupId,
