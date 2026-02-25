@@ -28,6 +28,9 @@ export default class WebGPURenderer {
     this.jointPipeline = null;
     this.medianJointBuffer = null;
 
+    this.msaaTexture = null;
+    this.msaaTextureView = null;
+    this.sampleCount = 4;
   }
 
   // Inicialización asíncrona: primero pedimos el "adapter" (la GPU física)
@@ -51,8 +54,11 @@ export default class WebGPURenderer {
             this.context.configure({
                 device: this.device,
                 format: this.presentationFormat,
-                alphaMode: "opaque",  
+                alphaMode: "opaque",
             });
+
+            // Crear la textura MSAA al inicio con el tamaño actual del canvas
+            this._createMSAATexture(canvas.width, canvas.height);
 
             return this.initPipeline().then(() => true);
         });
@@ -70,7 +76,7 @@ export default class WebGPURenderer {
           domainY: vec2<f32>,
           screenSize: vec2<f32>,
           renderPass: f32, // 0: all, 1: non-selected, 2: selected
-          unused_padding: f32,  // 32 bytes (requerido por WebGPU)
+          unused_padding: f32,
         }
 
         struct LineStyle {
@@ -99,7 +105,6 @@ export default class WebGPURenderer {
             @location(4) selectionFlag: f32,
         }
 
-        // Vertex shader: se ejecuta una vez por cada vértice en la GPU.
         @vertex
         fn vs_main(input: VertexInput) -> VertexOutput {
             var output: VertexOutput;
@@ -166,6 +171,7 @@ export default class WebGPURenderer {
             @location(1) otherPosition: vec2<f32>,
             @location(2) side: f32,
             @location(3) lineIndex: f32,
+            @location(4) t: f32,
         }
 
         struct ThickVertexOutput {
@@ -179,7 +185,6 @@ export default class WebGPURenderer {
         fn vs_thick(input: ThickVertexInput) -> ThickVertexOutput {
             var output: ThickVertexOutput;
             
-            // Transformer domain to normalized [0, 1]
             let p1Norm = vec2<f32>(
                 (input.position.x - uniforms.domainX.x) / (uniforms.domainX.y - uniforms.domainX.x),
                 (input.position.y - uniforms.domainY.x) / (uniforms.domainY.y - uniforms.domainY.x)
@@ -189,31 +194,27 @@ export default class WebGPURenderer {
                 (input.otherPosition.y - uniforms.domainY.x) / (uniforms.domainY.y - uniforms.domainY.x)
             );
 
-            // Convert to screen pixels
             let p1Screen = p1Norm * uniforms.screenSize;
             let p2Screen = p2Norm * uniforms.screenSize;
             
             let style = lineStyles[u32(input.lineIndex)];
-            let width = style.params.z; 
+            let width = style.params.z;
             
-            // Calculate direction and normal in screen space
             var dir = p2Screen - p1Screen;
             if (length(dir) < 0.0001) {
                 dir = vec2<f32>(1.0, 0.0);
             }
+            let segLen = length(dir);
             let unitDir = normalize(dir);
             let unitNormal = vec2<f32>(-unitDir.y, unitDir.x);
             
-            // Offset position
             let offsetPos = p1Screen + unitNormal * input.side * (width / 2.0);
-            
-            // Convert back to clip space
             let pClip = (offsetPos / uniforms.screenSize) * 2.0 - 1.0;
             
             output.position = vec4<f32>(pClip.x, pClip.y, 0.0, 1.0);
             output.color = style.color;
             output.dashPattern = vec2<f32>(style.params.x, style.params.y);
-            output.uv = vec2<f32>(input.side, 0.0); // side for better fragment effects if needed
+            output.uv = vec2<f32>(input.side, input.t * segLen);
             
             return output;
         }
@@ -222,12 +223,16 @@ export default class WebGPURenderer {
         fn fs_thick(input: ThickVertexOutput) -> @location(0) vec4<f32> {
             if (input.dashPattern.x > 0.0) {
                 let dashPeriod = input.dashPattern.x + input.dashPattern.y;
-                let dist = input.position.x + input.position.y;
-                if (fract(dist / dashPeriod) > (input.dashPattern.x / dashPeriod)) {
+                let segDist = input.uv.y;
+                if (fract(segDist / dashPeriod) > (input.dashPattern.x / dashPeriod)) {
                     discard;
                 }
             }
-            return input.color;
+            // Suavizado de borde sutil en los extremos laterales del quad
+            let edgeFade = 1.0 - smoothstep(0.88, 1.0, abs(input.uv.x));
+            var col = input.color;
+            col.a = col.a * edgeFade;
+            return col;
         }
 
         struct JointVertexInput {
@@ -327,6 +332,7 @@ export default class WebGPURenderer {
         ],
       },
       primitive: { topology: "triangle-list" },
+      multisample: { count: this.sampleCount },
     });
 
     this.thickLinePipeline = this.device.createRenderPipeline({
@@ -337,12 +343,13 @@ export default class WebGPURenderer {
         entryPoint: "vs_thick",
         buffers: [
           {
-            arrayStride: 24,
+            arrayStride: 28,
             attributes: [
-              { shaderLocation: 0, offset: 0, format: "float32x2" },
-              { shaderLocation: 1, offset: 8, format: "float32x2" },
-              { shaderLocation: 2, offset: 16, format: "float32" },
-              { shaderLocation: 3, offset: 20, format: "float32" },
+              { shaderLocation: 0, offset: 0,  format: "float32x2" },
+              { shaderLocation: 1, offset: 8,  format: "float32x2" },
+              { shaderLocation: 2, offset: 16, format: "float32"   },
+              { shaderLocation: 3, offset: 20, format: "float32"   },
+              { shaderLocation: 4, offset: 24, format: "float32"   }, // t (0=start, 1=end)
             ],
           },
         ],
@@ -361,6 +368,7 @@ export default class WebGPURenderer {
         ],
       },
       primitive: { topology: "triangle-list" },
+      multisample: { count: this.sampleCount },
     });
 
     this.pipeline = this.device.createRenderPipeline({
@@ -393,9 +401,9 @@ export default class WebGPURenderer {
         ],
       },
       primitive: { topology: "line-list" },
+      multisample: { count: this.sampleCount },
     });
 
-    // pool de uniform buffers, uno por pasada de renderizado.
     this.uniformBuffers = [];
     for (let i = 0; i < 11; i++) {
         this.uniformBuffers[i] = this.device.createBuffer({
@@ -482,14 +490,13 @@ export default class WebGPURenderer {
         if (i < points.length - 1) {
           const A = points[i];
           const B = points[i+1];
-          // Quad for segment AB: 2 triangles (6 vertices)
-          pointsAccumulator.push(A[0], A[1], B[0], B[1], -1.0, index);
-          pointsAccumulator.push(A[0], A[1], B[0], B[1],  1.0, index);
-          pointsAccumulator.push(B[0], B[1], A[0], A[1], -1.0, index);
+          pointsAccumulator.push(A[0], A[1], B[0], B[1], -1.0, index, 0.0); 
+          pointsAccumulator.push(A[0], A[1], B[0], B[1],  1.0, index, 0.0); 
+          pointsAccumulator.push(B[0], B[1], A[0], A[1], -1.0, index, 1.0); 
           
-          pointsAccumulator.push(A[0], A[1], B[0], B[1],  1.0, index);
-          pointsAccumulator.push(B[0], B[1], A[0], A[1], -1.0, index);
-          pointsAccumulator.push(B[0], B[1], A[0], A[1],  1.0, index);
+          pointsAccumulator.push(A[0], A[1], B[0], B[1],  1.0, index, 0.0); // A, side=+1, t=0
+          pointsAccumulator.push(B[0], B[1], A[0], A[1], -1.0, index, 1.0); // B, side=-1, t=1
+          pointsAccumulator.push(B[0], B[1], A[0], A[1],  1.0, index, 1.0); // B, side=+1, t=1
         }
       }
     });
@@ -510,7 +517,7 @@ export default class WebGPURenderer {
     });
     new Float32Array(this.medianVertexBuffer.getMappedRange()).set(vertexData);
     this.medianVertexBuffer.unmap();
-    this.medianVertexCount = vertexData.length / 6;
+    this.medianVertexCount = vertexData.length / 7; // 7 floats por vértice ahora (antes 6)
 
     // Joint Buffer
     const jointData = new Float32Array(jointsAccumulator);
@@ -652,6 +659,29 @@ export default class WebGPURenderer {
       }
   }
 
+  // Crea la textura de anti-aliasing MSAA 
+  _createMSAATexture(width, height) {
+    if (!this.device) return;
+    if (this.msaaTexture) {
+      this.msaaTexture.destroy();
+    }
+    this.msaaTexture = this.device.createTexture({
+      size: [width, height],
+      sampleCount: this.sampleCount,
+      format: this.presentationFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.msaaTextureView = this.msaaTexture.createView();
+    this._msaaWidth = width;
+    this._msaaHeight = height;
+  }
+
+  _ensureMSAATexture(width, height) {
+    if (!this.msaaTexture || this._msaaWidth !== width || this._msaaHeight !== height) {
+      this._createMSAATexture(width, height);
+    }
+  }
+
   draw(hasSelection = false, groupCount = 0) {
       if (!this.device || !this.pipeline || !this.vertexBuffer || !this.styleBuffer) return;
       
@@ -679,15 +709,19 @@ export default class WebGPURenderer {
       }
 
       const commandEncoder = this.device.createCommandEncoder();
-      const textureView = this.context.getCurrentTexture().createView();
+      const canvasTexture = this.context.getCurrentTexture();
+      const canvasTextureView = canvasTexture.createView();
+
+      this._ensureMSAATexture(canvasTexture.width, canvasTexture.height);
 
       const renderPassDescriptor = {
           colorAttachments: [
               {
-                  view: textureView,
-                  clearValue: { r: 1, g: 1, b: 1, a: 0 }, 
+                  view: this.msaaTextureView,
+                  resolveTarget: canvasTextureView,
+                  clearValue: { r: 1, g: 1, b: 1, a: 0 },
                   loadOp: "clear",
-                  storeOp: "store",
+                  storeOp: "discard",
               },
           ],
       };
@@ -741,8 +775,6 @@ export default class WebGPURenderer {
           }
       }
       
-      // Renderizado de curvas medianas: primero el halo blanco (más grueso y semitransparente)
-      // y luego la línea de color encima. Esto da el efecto de "borde" que las hace más legibles.
       if (this.medianVertexBuffer && this.medianBindGroup && this.medianVertexCount > 0 && this.thickLinePipeline && this.jointPipeline) {
         
         if (this.haloBindGroup) {
