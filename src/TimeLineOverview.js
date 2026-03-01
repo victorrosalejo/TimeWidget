@@ -247,7 +247,11 @@ function TimeLineOverview({
       });
 
       
-      renderer.uploadMedians(transformedMedians, medianStyles, ts.medianHalo !== false);
+      renderer.uploadMedians(transformedMedians, medianStyles, ts.medianHalo !== false, {
+        size:  ts.medianHaloSize,
+        alpha: ts.medianHaloAlpha,
+        color: ts.medianHaloColor,
+      });
     } else {
       renderer.uploadMedians([], new Map());
     }

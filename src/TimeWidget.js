@@ -85,6 +85,9 @@ function TimeWidget(
     medianFn = d3.median, // Function to use when showing the median
     medianMinRecordsPerBin = 5, // Min number of records each bin must have to be considered
     medianHalo = true, // If active show a halo around the median line
+    medianHaloSize = 6, // Extra width (px) of the halo on top of the median lineWidth
+    medianHaloAlpha = 0.8, // Opacity of the halo [0-1]
+    medianHaloColor = null, // CSS color of the halo (null = white)
     autoUpdate = true, // Allows to decide whether changes in brushes are processed while moving, or only at the end of the movement.
     _this, // pass the object this in order to be able to maintain the state in case of changes in the input
     fixAxis, // When active, the axes will not change when modifying the data.
@@ -241,6 +244,9 @@ function TimeWidget(
   ts.medianNumBins = medianNumBins;
   ts.medianFn = medianFn;
   ts.medianHalo = medianHalo;
+  ts.medianHaloSize = medianHaloSize;
+  ts.medianHaloAlpha = medianHaloAlpha;
+  ts.medianHaloColor = medianHaloColor;
   ts.alphaScale = alphaScale;
   ts.medianMinRecordsPerBin = medianMinRecordsPerBin;
   ts.yScale = yScale;

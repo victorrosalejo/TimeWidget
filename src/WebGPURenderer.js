@@ -28,6 +28,11 @@ export default class WebGPURenderer {
     this.jointPipeline = null;
     this.medianJointBuffer = null;
 
+    this.haloJointPipeline = null;
+    this.haloThickPipeline = null;
+    this.stencilTexture = null;
+    this.stencilTextureView = null;
+
     this.msaaTexture = null;
     this.msaaTextureView = null;
     this.sampleCount = 4;
@@ -301,6 +306,15 @@ export default class WebGPURenderer {
       bindGroupLayouts: [this.bindGroupLayout],
     });
 
+    // Requerido porque el render pass ahora declara un adjunto de profundidad/stencil.
+    const neutralDepthStencil = {
+      format: 'depth24plus-stencil8',
+      depthWriteEnabled: false,
+      depthCompare: 'always',
+      stencilFront: { compare: 'always', failOp: 'keep', depthFailOp: 'keep', passOp: 'keep' },
+      stencilBack:  { compare: 'always', failOp: 'keep', depthFailOp: 'keep', passOp: 'keep' },
+    };
+
     this.jointPipeline = this.device.createRenderPipeline({
       label: "Joint Render Pipeline",
       layout: pipelineLayout,
@@ -331,6 +345,81 @@ export default class WebGPURenderer {
           },
         ],
       },
+      depthStencil: neutralDepthStencil,
+      primitive: { topology: "triangle-list" },
+      multisample: { count: this.sampleCount },
+    });
+
+    const haloStencilState = {
+      format: 'depth24plus-stencil8',
+      depthWriteEnabled: false,
+      depthCompare: 'always',
+      stencilFront: { compare: 'not-equal', failOp: 'keep', depthFailOp: 'keep', passOp: 'replace' },
+      stencilBack:  { compare: 'not-equal', failOp: 'keep', depthFailOp: 'keep', passOp: 'replace' },
+    };
+
+    // Pipeline de unión de halo
+    this.haloJointPipeline = this.device.createRenderPipeline({
+      label: "Halo Joint Pipeline (stencil)",
+      layout: pipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vs_joint",
+        buffers: [{
+          arrayStride: 20,
+          attributes: [
+            { shaderLocation: 0, offset: 0,  format: "float32x2" },
+            { shaderLocation: 1, offset: 8,  format: "float32x2" },
+            { shaderLocation: 2, offset: 16, format: "float32" },
+          ],
+        }],
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fs_joint",
+        targets: [{
+          format: this.presentationFormat,
+          blend: {
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one",       dstFactor: "one-minus-src-alpha", operation: "add" },
+          },
+        }],
+      },
+      depthStencil: haloStencilState,
+      primitive: { topology: "triangle-list" },
+      multisample: { count: this.sampleCount },
+    });
+
+    // Pipeline de línea gruesa para halo 
+    this.haloThickPipeline = this.device.createRenderPipeline({
+      label: "Halo Thick Line Pipeline (stencil)",
+      layout: pipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vs_thick",
+        buffers: [{
+          arrayStride: 28,
+          attributes: [
+            { shaderLocation: 0, offset: 0,  format: "float32x2" },
+            { shaderLocation: 1, offset: 8,  format: "float32x2" },
+            { shaderLocation: 2, offset: 16, format: "float32" },
+            { shaderLocation: 3, offset: 20, format: "float32" },
+            { shaderLocation: 4, offset: 24, format: "float32" },
+          ],
+        }],
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fs_thick",
+        targets: [{
+          format: this.presentationFormat,
+          blend: {
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one",       dstFactor: "one-minus-src-alpha", operation: "add" },
+          },
+        }],
+      },
+      depthStencil: haloStencilState,
       primitive: { topology: "triangle-list" },
       multisample: { count: this.sampleCount },
     });
@@ -367,6 +456,7 @@ export default class WebGPURenderer {
           },
         ],
       },
+      depthStencil: neutralDepthStencil,
       primitive: { topology: "triangle-list" },
       multisample: { count: this.sampleCount },
     });
@@ -400,6 +490,7 @@ export default class WebGPURenderer {
           },
         ],
       },
+      depthStencil: neutralDepthStencil,
       primitive: { topology: "line-list" },
       multisample: { count: this.sampleCount },
     });
@@ -461,7 +552,7 @@ export default class WebGPURenderer {
     this.bindGroupNeedsUpdate = true;
   }
 
-  uploadMedians(medians, medianStyles, haloEnabled = true) {
+  uploadMedians(medians, medianStyles, haloEnabled = true, haloConfig = {}) {
     if (!this.device || !medians || medians.length === 0) {
       this.medianVertexCount = 0;
       this.medianCount = 0;
@@ -568,13 +659,27 @@ export default class WebGPURenderer {
       mainStyleData[index*8 + 6] = width;
       mainStyleData[index*8 + 7] = 0;
 
-      haloStyleData[index*8 + 0] = 1.0; 
-      haloStyleData[index*8 + 1] = 1.0;
-      haloStyleData[index*8 + 2] = 1.0;
-      haloStyleData[index*8 + 3] = 0.8; 
-      haloStyleData[index*8 + 4] = 0;   
+      const haloColorStr = (haloConfig && haloConfig.color) ? haloConfig.color : null;
+      let haloR = 1.0, haloG = 1.0, haloB = 1.0; // default: white
+      if (haloColorStr) {
+        const tmp = document.createElement('canvas').getContext('2d');
+        tmp.fillStyle = haloColorStr;
+        const filled = tmp.fillStyle; // normalised hex
+        const r = parseInt(filled.slice(1, 3), 16) / 255;
+        const g = parseInt(filled.slice(3, 5), 16) / 255;
+        const b = parseInt(filled.slice(5, 7), 16) / 255;
+        if (!isNaN(r)) { haloR = r; haloG = g; haloB = b; }
+      }
+      const haloAlpha = (haloConfig && haloConfig.alpha != null) ? haloConfig.alpha : 0.8;
+      const haloExtra = (haloConfig && haloConfig.size  != null) ? haloConfig.size  : 6.0;
+
+      haloStyleData[index*8 + 0] = haloR;
+      haloStyleData[index*8 + 1] = haloG;
+      haloStyleData[index*8 + 2] = haloB;
+      haloStyleData[index*8 + 3] = haloAlpha;
+      haloStyleData[index*8 + 4] = 0;   // no dash
       haloStyleData[index*8 + 5] = 0;
-      haloStyleData[index*8 + 6] = width + 3.0; 
+      haloStyleData[index*8 + 6] = width + haloExtra;
       haloStyleData[index*8 + 7] = 0;
     });
 
@@ -659,12 +764,10 @@ export default class WebGPURenderer {
       }
   }
 
-  // Crea la textura de anti-aliasing MSAA 
+  // Crea la textura de anti-aliasing MSAA y la textura de stencil para el halo
   _createMSAATexture(width, height) {
     if (!this.device) return;
-    if (this.msaaTexture) {
-      this.msaaTexture.destroy();
-    }
+    if (this.msaaTexture) this.msaaTexture.destroy();
     this.msaaTexture = this.device.createTexture({
       size: [width, height],
       sampleCount: this.sampleCount,
@@ -672,6 +775,16 @@ export default class WebGPURenderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.msaaTextureView = this.msaaTexture.createView();
+
+    if (this.stencilTexture) this.stencilTexture.destroy();
+    this.stencilTexture = this.device.createTexture({
+      size: [width, height],
+      sampleCount: this.sampleCount,
+      format: 'depth24plus-stencil8',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.stencilTextureView = this.stencilTexture.createView();
+
     this._msaaWidth = width;
     this._msaaHeight = height;
   }
@@ -724,6 +837,11 @@ export default class WebGPURenderer {
                   storeOp: "discard",
               },
           ],
+          depthStencilAttachment: this.stencilTextureView ? {
+              view: this.stencilTextureView,
+              depthLoadOp: 'clear',  depthStoreOp: 'discard', depthClearValue: 1.0,
+              stencilLoadOp: 'clear', stencilStoreOp: 'discard', stencilClearValue: 0,
+          } : undefined,
       };
 
       const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
@@ -777,14 +895,17 @@ export default class WebGPURenderer {
       
       if (this.medianVertexBuffer && this.medianBindGroup && this.medianVertexCount > 0 && this.thickLinePipeline && this.jointPipeline) {
         
-        if (this.haloBindGroup) {
+        if (this.haloBindGroup && this.haloJointPipeline && this.haloThickPipeline) {
           passEncoder.setBindGroup(0, this.haloBindGroup);
-          
-          passEncoder.setPipeline(this.jointPipeline);
+          passEncoder.setStencilReference(1);
+
+          // 1) Uniones primero → tapas redondeadas en cada vértice, marca los píxeles cubiertos (stencil→1)
+          passEncoder.setPipeline(this.haloJointPipeline);
           passEncoder.setVertexBuffer(0, this.medianJointBuffer);
           passEncoder.draw(this.medianJointCount, 1, 0, 0);
-          
-          passEncoder.setPipeline(this.thickLinePipeline);
+
+          // 2) Segmentos → rellena entre uniones, omite los píxeles ya pintados por las uniones
+          passEncoder.setPipeline(this.haloThickPipeline);
           passEncoder.setVertexBuffer(0, this.medianVertexBuffer);
           passEncoder.draw(this.medianVertexCount, 1, 0, 0);
         }
