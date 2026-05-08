@@ -1,5 +1,6 @@
 import * as d3 from "d3";
 import { darken } from "./utils.js";
+import WebGPURenderer from "./WebGPURenderer.js";
 
 function TimeLineOverview({
   ts,
@@ -9,7 +10,9 @@ function TimeLineOverview({
   x,
   y,
   groupAttr,
+  renderer = "canvas",
 }) {
+  const dpr = window.devicePixelRatio || 1;
   let me = {};
   let paths, overviewX, overviewY;
 
@@ -27,23 +30,62 @@ function TimeLineOverview({
   
   let linem = d3.line();
 
+  const innerWidth = width - ts.margin.left - ts.margin.right;
+  const innerHeight = height - ts.margin.top - ts.margin.bottom;
+
   const canvas = divOverview
     .selectAll("canvas")
     .data([1])
     .join("canvas")
-    .attr("height", height * window.devicePixelRatio)
-    .attr("width", width * window.devicePixelRatio)
+    .attr("height", innerHeight * dpr)
+    .attr("width", innerWidth * dpr)
     .style("position", "absolute")
     .style("z-index", "-1")
     .style("top", `${ts.margin.top}px`)
     .style("left", `${ts.margin.left}px`)
-    .style("width", `${width}px`)
-    .style("height", `${height}px`)
+    .style("width", `${innerWidth}px`)
+    .style("height", `${innerHeight}px`)
     .style("pointer-events", "none");
 
-  const context = canvas.node().getContext("2d");
-  context.scale(window.devicePixelRatio, window.devicePixelRatio);
-  //context.globalCompositeOperation = "lighter";
+  let context = null;
+
+  function initCanvas2D() {
+    if (context) return;
+    context = canvas.node().getContext("2d");
+    context.scale(dpr, dpr);
+    console.log("%c[TimeWidget] Canvas 2D Renderer Active", "color: #ffaa00; font-weight: bold;");
+  }
+
+  let gpuRenderer = null;
+  let isGpuReady = false;
+  let pendingRender = null;
+  let pendingData = null;
+
+  if (renderer === "webgpu") {
+    gpuRenderer = new WebGPURenderer();
+    gpuRenderer.init(canvas.node()).then((ok) => {
+      if (ok) {
+        console.log("%c[TimeWidget] WebGPU Renderer Active", "color: #00ff00; font-weight: bold;");
+        isGpuReady = true;
+        
+        if (pendingData) {
+          me.data(pendingData);
+          pendingData = null;
+        }
+        
+        if (pendingRender) {
+          pendingRender();
+          pendingRender = null;
+        }
+      } else {
+        console.warn("[TimeWidget] WebGPU initialization failed, falling back to Canvas 2D");
+        gpuRenderer = null;
+        initCanvas2D();
+      }
+    });
+  } else {
+    initCanvas2D();
+  }
 
   me.data = function (data) {
     paths = new Map();
@@ -52,6 +94,20 @@ function TimeLineOverview({
       let pathObject = { path: new Path2D(line(d[1])), group: group };
       paths.set(d[0], pathObject);
     });
+
+    if (gpuRenderer) {
+      if (!isGpuReady) {
+        pendingData = data;
+        return;
+      }
+      const formattedData = data.map(([id, points]) => ({
+        id,
+        points: points
+          .map((p) => [+x(p), +y(p)])
+          .filter((p) => !isNaN(p[0]) && !isNaN(p[1])),
+      }));
+      gpuRenderer.uploadData(formattedData);
+    }
   };
 
   me.setScales = function ({ scaleX, scaleY }) {
@@ -214,13 +270,86 @@ function TimeLineOverview({
     medians,
     hasSelection
   ) {
-    renderOvwerview(
-      dataSelected,
-      groupSelected,
-      dataNotSelected,
-      medians,
-      hasSelection
-    );
+    if (gpuRenderer) {
+      if (!isGpuReady) {
+        pendingRender = () =>
+          me.render(
+            dataSelected,
+            groupSelected,
+            dataNotSelected,
+            medians,
+            hasSelection
+          );
+        return;
+      }
+
+      const stylesMap = new Map();
+      const defaultColorRGB = d3.rgb(ts.defaultColor);
+      const defaultColorVec = [
+        defaultColorRGB.r / 255,
+        defaultColorRGB.g / 255,
+        defaultColorRGB.b / 255,
+        ts.defaultAlpha,
+      ];
+
+      dataNotSelected.forEach((d) => {
+        stylesMap.set(d[0], {
+          color: defaultColorVec,
+          selectionFlag: 0.0,
+        });
+      });
+
+      let groupIdx = 0;
+      dataSelected.forEach((groupData, groupId) => {
+        const color = d3.rgb(computeColor(groupId));
+        const flag = groupIdx + 1.0; // Pass 2 = flag 1.0, Pass 3 = flag 2.0, etc.
+        
+        groupData.forEach((d) => {
+          stylesMap.set(d[0], {
+            color: [color.r / 255, color.g / 255, color.b / 255, ts.selectedAlpha],
+            selectionFlag: flag, 
+          });
+        });
+        groupIdx++;
+      });
+
+      const transparentColor = [0, 0, 0, 0];
+      gpuRenderer.updateStyles(stylesMap, transparentColor);
+
+      gpuRenderer.updateUniforms(
+        {
+          x: overviewX.domain().map((d) => +d),
+          y: overviewY.domain().map((d) => +d),
+        },
+        innerWidth  * dpr,
+        innerHeight * dpr,
+        { top: 0, left: 0, right: 0, bottom: 0 } // No margins needed, canvas is already inner size
+      );
+
+      const medianStyles = new Map();
+      if (medians && medians.length > 0) {
+        medians.forEach(([groupId]) => {
+          const color = d3.rgb(computeColor(groupId));
+          medianStyles.set(groupId, {
+            color: [color.r / 255, color.g / 255, color.b / 255, ts.medianLineAlpha],
+            lineWidth: ts.medianLineWidth,
+            dashOn: ts.medianLineDash[0] || 0,
+            dashOff: ts.medianLineDash[0] || 0,
+          });
+        });
+      }
+      gpuRenderer.uploadMedians(medians || [], medianStyles);
+
+      gpuRenderer.draw(hasSelection, dataSelected.size);
+    } else {
+      renderOvwerview(
+        dataSelected,
+        groupSelected,
+        dataNotSelected,
+        medians,
+        hasSelection
+      );
+    }
   };
 
   return me;

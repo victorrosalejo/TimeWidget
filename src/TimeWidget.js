@@ -89,6 +89,7 @@ function TimeWidget(
     overviewWidth, // Legacy, to be deleted
     overviewHeight, // Legacy, to be deleted
     highlightAlpha = 1, // Transparency oh the highlighted lines (lines selected in other TS)
+    renderer = "webgpu", // Rendering backend: 'webgpu' (default, GPU-accelerated) | 'canvas' (legacy Canvas 2D + d3)
   } = {}
 ) {
   width = overviewWidth || width;
@@ -242,6 +243,7 @@ function TimeWidget(
   ts.xScale = xScale;
   ts.highlightAlpha = highlightAlpha;
   ts.selectedColorTransform = selectedColorTransform;
+  ts.renderer = renderer;
   //Backwards compatibility with groupAttr.
   if (groupAttr) {
     console.warn('The attribute "groupAttr" is deprecated use "color" instead');
@@ -501,11 +503,20 @@ function renderReferenceCurvesWidget() {
           ? `<button class="add-association-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Association</button>`
           : `<button class="add-slider-btn" style="margin-left: 8px; font-size: 0.8em; cursor: pointer;">Add Slider</button>`;
 
+        const hexColor = d3.color(rc.color || "#000000").formatHex();
         div.node().innerHTML = `
             <div style="display: flex; align-items: center; font-weight: bold;">
                 <input type="checkbox" class="rc-visible-toggle" ${
                   rc.isVisible !== false ? "checked" : ""
                 }></input>
+                
+                <input type="color" class="rc-color-picker" value="${hexColor}" title="Change Curve Color" style="
+                  width: 20px; height: 20px; 
+                  border: none; padding: 0; background: none;
+                  margin: 0 5px; cursor: pointer;
+                  flex-shrink: 0;">
+                </input>
+
                 <input class="rc-name" style="border: none; outline: none; font-weight: bold; width: ${String(
                   rc.name || rc.id
                 ).length + 1}ch;" value="${rc.name || rc.id}"></input>
@@ -514,6 +525,12 @@ function renderReferenceCurvesWidget() {
             <div class="associations-list" style="margin-left: 20px; margin-top: 4px;"></div>
             <div class="sliders-list" style="margin-left: 20px; margin-top: 4px;"></div>
           `;
+
+        div.select(".rc-color-picker").on("input", (e) => {
+             rc.color = e.target.value;
+             ts.printReferenceCurves(referenceCurves); 
+             ts.printSliders(); 
+        });
 
         div
           .select("input.rc-name")
@@ -553,6 +570,10 @@ function renderReferenceCurvesWidget() {
 
             d3.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <input type="checkbox" class="slider-enabled-toggle" title="Enable/Disable Slider" ${
+                        slider.userEnabled ? "checked" : ""
+                      } style="margin-right: 5px;"></input>
+                      
                       <input class="slider-name" style="border: none; outline: none; width: ${String(
                         slider.name
                       ).length + 1}ch;" value="${slider.name}"></input>
@@ -565,9 +586,7 @@ function renderReferenceCurvesWidget() {
                       <button class="toggle-side-btn" title="Toggle position (above/below)" style="border: none; background: none; cursor: pointer; font-size: 1.1em; padding: 0 5px;">
                           ${slider.side === "above" ? "↓" : "↑"}
                       </button>
-                      <input type="checkbox" class="slider-enabled-toggle" title="Enable/Disable Slider" ${
-                        slider.userEnabled ? "checked" : ""
-                      }></input>
+                      
                       <button class="remove-slider-btn" title="Remove Slider" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
@@ -626,6 +645,10 @@ function renderReferenceCurvesWidget() {
 
             d3.select(this).node().innerHTML = `
                   <div style="display: flex; align-items: center; margin-bottom: 2px; font-size: 0.9em;">
+                      <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
+                        assoc.userEnabled ? "checked" : ""
+                      } style="margin-right: 5px;"></input>
+
                       <span>(${groupName})</span>
                       <div title="Associated Group Color" style="width: 12px; height: 12px; background-color: ${computeBrushColor(
                         assoc.id
@@ -654,9 +677,7 @@ function renderReferenceCurvesWidget() {
                           ${assoc.negate ? "checked" : ""}>
                         <label for="${uniqueId}-not" style="cursor: pointer;">NOT</label>
                       </div>
-                      <input type="checkbox" class="assoc-enabled-toggle" title="Enable/Disable Association" ${
-                        assoc.userEnabled ? "checked" : ""
-                      }></input>
+                      
                       <button class="remove-assoc-btn" title="Remove Association" style="color: red; border:none; background:none; font-weight: bold; cursor: pointer;">&cross;</button>
                   </div>
                 `;
@@ -957,6 +978,7 @@ function renderReferenceCurvesWidget() {
       groupAttr: color,
       overviewX,
       overviewY,
+      renderer, 
     });
 
     svg = divRender
@@ -1181,7 +1203,7 @@ function renderReferenceCurvesWidget() {
       groupsCallback: onBrushGroupsChange,
       changeSelectedCoordinatesCallback: onBrushCoordinatesChange,
       referenceCurves: referenceCurves,
-      getProbePairBoxes: () => ts.getActiveSliderBoxes(), // <-- Ya hiciste este cambio
+      getProbePairBoxes: () => ts.getActiveSliderBoxes(),
       getSliders: () => sliders,
       getYAtX: getYAtX,
       printSlidersCallback: () => ts.printSliders(),
@@ -1859,8 +1881,12 @@ ts.printSliders = function () {
 
     const enter = sel.enter().append("g").attr("class", "slider-group");
     
-    enter.append("path").attr("class", "slider-background").attr("opacity", 0.15); // MODIFICADO: pointer-events se maneja abajo
-enter.append("line") 
+    enter.append("path")
+         .attr("class", "slider-background")
+         .attr("opacity", 0.15)
+         .style("cursor", "grab");
+
+    enter.append("line") 
         .attr("class", "slider-horizontal-border")
         .attr("stroke", "#333") 
         .attr("stroke-width", "4px") 
@@ -1904,13 +1930,26 @@ enter.append("line")
             .style("cursor", "ew-resize");
         gSide
             .append("title")
-            .text("Drag to move. Double-click to toggle side (above/below).");
+            .text("Drag to move edge. Double-click to toggle side (above/below).");
     });
 
     const all = enter.merge(sel);
 
+    const totalLines = groupedData ? groupedData.length : 0;
+    const calculatedDelay = Math.min(300, 30 + Math.floor(totalLines / 20));
+    const throttledRecompute = throttle(calculatedDelay, () => {
+        brushes.recomputeSelection();
+    });
+
+    const handleDragComputation = () => {
+        if (ts.autoUpdate) {
+            throttledRecompute();
+        }
+    };
+
     all.each(function (slider) {
         const gSlider = d3.select(this);
+        const ref = getRefCurveById(slider.rcId);
         gSlider.select(".slider-background")
             .style("pointer-events", "all") 
             .on("contextmenu", (sourceEvent) => {
@@ -1929,16 +1968,43 @@ enter.append("line")
             })
             .on("dblclick", (e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 slider.side = slider.side === "above" ? "below" : "above";
                 updateSliderVisuals(gSlider, slider); 
                 brushes.recomputeSelection(); 
-            });
+            })
+            .call(d3.drag()
+                .on("start", function() {
+                    d3.select(this).style("cursor", "grabbing");
+                })
+                .on("drag", (e) => {
+                    if (!ref) return;
+                    const dx = e.dx;
+                    const currentLeftPx = overviewX(slider.leftX);
+                    const currentRightPx = overviewX(slider.rightX);
+                    const newLeftDomain = overviewX.invert(currentLeftPx + dx);
+                    const newRightDomain = overviewX.invert(currentRightPx + dx);
+
+                    const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
+                    
+                    if (+newLeftDomain >= minRefX && +newRightDomain <= maxRefX) {
+                        slider.leftX = newLeftDomain;
+                        slider.rightX = newRightDomain;
+                        
+                        updateSliderVisuals(gSlider, slider);
+                        handleDragComputation();
+                    }
+                })
+                .on("end", function() {
+                    d3.select(this).style("cursor", "grab");
+                    brushes.recomputeSelection(); 
+                })
+            );
 
         const minGap = domainDxFromPixels(5);
 
-        const updateSliderPositionAndVisuals = (which, newX) => {
-            const xDom = overviewX.invert(newX);
-            const ref = getRefCurveById(slider.rcId);
+        const updateSingleEdge = (which, newXPixel) => {
+            const xDom = overviewX.invert(newXPixel);
             if (!ref) return;
 
             const [minRefX, maxRefX] = d3.extent(ref.data, (d) => +d[0]);
@@ -1955,28 +2021,28 @@ enter.append("line")
             updateSliderVisuals(gSlider, slider);
         };
 
-        const recompute = () => brushes.recomputeSelection();
-        const fastVisualUpdate = throttle(16, updateSliderPositionAndVisuals);
-
         ["left", "right"].forEach(which => {
             gSlider.select(`.handle-${which} .slider-hit-area`)
                 .call(d3.drag()
                     .on("drag", (e) => {
-                        fastVisualUpdate(which, e.x);
+                        updateSingleEdge(which, e.x); 
+                        handleDragComputation();
                     })
                     .on("end", (e) => {
-                        updateSliderPositionAndVisuals(which, e.x);
-                        recompute();
+                        updateSingleEdge(which, e.x);
+                        brushes.recomputeSelection();
                     })
                 )
                 .on("dblclick", (e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     slider.side = slider.side === "above" ? "below" : "above";
                     updateSliderVisuals(gSlider, slider);
-                    recompute();
+                    brushes.recomputeSelection();
                 })
                 .on("contextmenu", (sourceEvent) => {
                     sourceEvent.preventDefault();
+                    sourceEvent.stopPropagation();
                     const contextMenu = brushes.contextMenu;
                     if (!contextMenu) return;
                     const xDom = which === "left" ? slider.leftX : slider.rightX;
@@ -2459,7 +2525,7 @@ ts.printReferenceCurves = function (curves) {
     const lineCurves = visible.filter((c) => !c.isSimplePoints);
     const pointCurves = visible.filter((c) => c.isSimplePoints);
 
-    // DIBUJA LAS LÍNEAS (sin cambios aquí)
+
     const line2 = d3
       .line()
       .defined((d) => d[1] !== undefined && d[1] !== null)

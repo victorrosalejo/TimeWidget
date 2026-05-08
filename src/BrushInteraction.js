@@ -367,9 +367,9 @@ function brushInteraction({
       const px = +x(p);
       const py = y(p);
 
-      if (px < sliderMinX) {
+      if (px <= sliderMinX) {
         hasLeftPoint = true;
-      } else if (px > sliderMaxX) {
+      } else if (px >= sliderMaxX) {
         hasRightPoint = true;
       } else {
         // Point is within slider's X-range.
@@ -383,6 +383,25 @@ function brushInteraction({
     // If it doesn't even span across, it's not "contained"
     if (!hasLeftPoint || !hasRightPoint) {
       return false;
+    }
+
+    let yAtMinX = null;
+    for (let i = 0; i < timelinePolyline.length - 1; i++) {
+        const p1 = timelinePolyline[i];
+        const p2 = timelinePolyline[i + 1];
+        const x1 = +x(p1), x2 = +x(p2);
+        if ((x1 <= sliderMinX && x2 >= sliderMinX) || (x2 <= sliderMinX && x1 >= sliderMinX)) {
+            if (Math.abs(x1 - x2) < 1e-10) {
+                yAtMinX = y(p1);
+            } else {
+                const t = (sliderMinX - x1) / (x2 - x1);
+                yAtMinX = y(p1) * (1 - t) + y(p2) * t;
+            }
+            break;
+        }
+    }
+    if (yAtMinX !== null && !d3.polygonContains(curtainPolygon, [sliderMinX, yAtMinX])) {
+        return false;
     }
 
     // Check segments for horizontal crossings
@@ -490,7 +509,6 @@ function brushFilter() {
       bvh && Array.isArray(bvh.referenceLines) ? bvh.referenceLines : [];
 
     for (const [groupId, group] of brushesGroup.entries()) {
-      const finalSelectedIds = new Set();
       const andFilters = [];
       const orFilters = [];
 
@@ -531,9 +549,16 @@ function brushFilter() {
               const refCurve = dataDomainCurves.find(
                 (rc) => rc.id === slider.rcId
               );
-              if (!refCurve) return new Set();
-              const [[x0, y0], [x1, y1]] = sliderInfo.box;
-              let candidateIds = BVH_.intersect(x0, y0, x1, y1);
+              // Si la curva no existe o está oculta, no aplicamos filtro
+              if (!refCurve || refCurve.isVisible === false) return new Set();
+              
+              let candidateIds;
+              if (slider.mode === BrushModes.Contains) {
+                candidateIds = new Set(data.map((d) => d[0]));
+              } else {
+                const [[x0, y0], [x1, y1]] = sliderInfo.box;
+                candidateIds = BVH_.intersect(x0, y0, x1, y1);
+              }
 
               const singleSliderResult = new Set();
               for (const id of candidateIds) {
@@ -571,7 +596,7 @@ function brushFilter() {
           Array.isArray(rcFromBvh.collisions)
         ) {
           rcFromBvh.associations.forEach((assoc) => {
-            if (assoc.enabled && assoc.id === groupId) {
+            if (assoc.enabled && assoc.id === groupId && rcFromBvh.isVisible !== false) {
               const aggregation = assoc.aggregation || BrushAggregation.Or;
               const filterList =
                 aggregation === BrushAggregation.And ? andFilters : orFilters;
@@ -580,10 +605,10 @@ function brushFilter() {
                 aggregation: aggregation,
                 getResults: () => {
                   const pointResults = new Set();
-                  rcFromBvh.collisions.forEach((collision) => {
+                  const currentCollisions = Array.isArray(rcFromBvh.collisions) ? rcFromBvh.collisions : [];
+                  currentCollisions.forEach((collision) => {
                     pointResults.add(collision.dataId);
                   });
-                  // NOT se aplica aquí, al resultado individual
                   return getBrushResultWithNegation(
                     pointResults,
                     assoc.negate || false
@@ -600,7 +625,7 @@ function brushFilter() {
       const orResults = new Set();
       if (orFilters.length > 0) {
         // Unir todos los resultados OR
-        orFilters.forEach((filter) => {
+        orFilters.forEach((filter, idx) => {
           const filterResults = filter.getResults();
           filterResults.forEach((id) => orResults.add(id));
         });
@@ -610,10 +635,12 @@ function brushFilter() {
       let hasAndFilters = andFilters.length > 0;
 
       if (hasAndFilters) {
-        // Intersectar todos los resultados AND
-        andResults = andFilters[0].getResults(); // Empezar con el primero
+        andResults = andFilters[0].getResults();
+        
         for (let i = 1; i < andFilters.length; i++) {
-          if (andResults.size === 0) break; // Optimización
+          if (andResults.size === 0) {
+            break; 
+          }
           const currentResults = andFilters[i].getResults();
           andResults = new Set(
             [...andResults].filter((id) => currentResults.has(id))
@@ -621,22 +648,16 @@ function brushFilter() {
         }
       }
 
-      // --- 3. Combine AND and OR results ---
-      // (Esta es la lógica clave que tu escenario describe)
-      if (orFilters.length > 0) {
-        orResults.forEach((id) => finalSelectedIds.add(id));
+      const finalSelectedIds = new Set();
+      
+      const hasOrFilters = orFilters.length > 0;
+
+      if (hasOrFilters) {
+         orResults.forEach((id) => finalSelectedIds.add(id));
       }
 
       if (hasAndFilters) {
-        if (orFilters.length === 0) {
-          // Solo hay filtros AND (como en tu escenario)
-          andResults.forEach((id) => finalSelectedIds.add(id));
-        } else {
-          // Hay filtros AND y OR
-          // El resultado es la UNIÓN de ambos conjuntos
-          andResults.forEach((id) => finalSelectedIds.add(id));
-          // (los 'orResults' ya se añadieron arriba)
-        }
+        andResults.forEach((id) => finalSelectedIds.add(id));
       }
       
       // --- 4. Populate newDataSelected ---
@@ -1282,6 +1303,12 @@ function brushFilter() {
 
   me.hasSelection = function () {
     if (brushSize !== 0) return true;
+    if (dataSelected) {
+      for (const groupEntries of dataSelected.values()) {
+        if (groupEntries && groupEntries.length > 0) return true;
+      }
+    }
+
     const bvh =
       BVH_ && typeof BVH_.getBvh === "function" ? BVH_.getBvh() : BVH_;
     const refs =
