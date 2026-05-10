@@ -1228,6 +1228,7 @@ function renderReferenceCurvesWidget() {
 
   // Callback that is called every time the coordinates of the selected brush are modified.
   function onBrushCoordinatesChange(selection) {
+    _setCoordsMode("timebox");
     updateBrushSpinBox(selection);
     updateStatus();
   }
@@ -1296,7 +1297,7 @@ function renderReferenceCurvesWidget() {
       // .style("background-color", ts.backgroundColor)
       .on("change", onSpinboxChange);
 
-    let divY = selection.append("div");
+    let divY = selection.append("div").attr("id", "coordsYRow");
 
     divY.append("span").text(yLabel ? yLabel : "Y Axis:");
 
@@ -1334,9 +1335,38 @@ function renderReferenceCurvesWidget() {
     if (showBrushesCoordinates) {
       selection
         .insert("h3", ":first-child")
+        .attr("id", "coordsTitle")
         .text("Current TimeBox Coordinates:");
       divControls.appendChild(brushesCoordinates);
     }
+  }
+
+  let _coordsActiveSlider = null;
+
+  function _setCoordsMode(mode) {
+    const titleEl = brushesCoordinates
+      ? brushesCoordinates.querySelector("#coordsTitle")
+      : null;
+    const yRow = brushesCoordinates
+      ? brushesCoordinates.querySelector("#coordsYRow")
+      : null;
+    if (mode === "slider") {
+      if (titleEl) titleEl.textContent = "Current Slider Coordinates:";
+      if (yRow) yRow.style.display = "none";
+    } else {
+      _coordsActiveSlider = null;
+      if (titleEl) titleEl.textContent = "Current TimeBox Coordinates:";
+      if (yRow) yRow.style.display = "";
+    }
+  }
+
+  function updateSliderSpinBox(slider) {
+    if (!brushSpinBoxes) return;
+    let [[sx0, ], [sx1, ]] = brushSpinBoxes;
+    _coordsActiveSlider = slider;
+    _setCoordsMode("slider");
+    sx0.node().value = fmtX(slider.leftX);
+    sx1.node().value = fmtX(slider.rightX);
   }
 
   function generateDataSelectionDiv() {
@@ -1424,6 +1454,36 @@ function renderReferenceCurvesWidget() {
 
   // Callback that is called when the value of the spinboxes is modified.
   function onSpinboxChange(sourceEvent) {
+    // ── Modo Slider: actualizar leftX / rightX del slider activo ──
+    if (_coordsActiveSlider) {
+      const slider = _coordsActiveSlider;
+      let [[sx0, ], [sx1, ]] = brushSpinBoxes;
+      let newLeft, newRight;
+      if (hasScaleTime) {
+        newLeft  = new Date(sx0.node().value);
+        newRight = new Date(sx1.node().value);
+      } else {
+        newLeft  = +sx0.node().value;
+        newRight = +sx1.node().value;
+      }
+      // Garantizar orden y separación mínima
+      if (newLeft >= newRight) {
+        if (sourceEvent.target === sx0.node()) {
+          newRight = newLeft + ts.stepX;
+          sx1.node().value = fmtX(newRight);
+        } else {
+          newLeft = newRight - ts.stepX;
+          sx0.node().value = fmtX(newLeft);
+        }
+      }
+      slider.leftX  = newLeft;
+      slider.rightX = newRight;
+      ts.printSliders();
+      brushes.recomputeSelection();
+      return;
+    }
+
+    // ── Modo TimeBox (comportamiento original) ────────────────────
     let selectedBrush = brushes.getSelectedBrush();
     if (selectedBrush === null) return;
 
@@ -1992,6 +2052,7 @@ ts.printSliders = function () {
                         slider.rightX = newRightDomain;
                         
                         updateSliderVisuals(gSlider, slider);
+                        updateSliderSpinBox(slider);
                         handleDragComputation();
                     }
                 })
@@ -2025,11 +2086,13 @@ ts.printSliders = function () {
             gSlider.select(`.handle-${which} .slider-hit-area`)
                 .call(d3.drag()
                     .on("drag", (e) => {
-                        updateSingleEdge(which, e.x); 
+                        updateSingleEdge(which, e.x);
+                        updateSliderSpinBox(slider);
                         handleDragComputation();
                     })
                     .on("end", (e) => {
                         updateSingleEdge(which, e.x);
+                        updateSliderSpinBox(slider);
                         brushes.recomputeSelection();
                     })
                 )
