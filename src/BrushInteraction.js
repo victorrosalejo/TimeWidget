@@ -1251,6 +1251,16 @@ function brushFilter() {
     updateGroups();
   };
 
+  me.selectBrush = function (groupId, brushId) {
+    const group = brushesGroup.get(groupId);
+    if (group && group.brushes.has(brushId)) {
+      selectedBrush = [brushId, group.brushes.get(brushId)];
+      brushGroupSelected = groupId;
+      drawBrushes();
+      selectedBrushCallback(selectedBrush);
+    }
+  };
+
   me.getBrushesGroupSize = function () {
     return brushesGroup.size;
   };

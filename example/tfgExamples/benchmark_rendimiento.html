@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Benchmark Rendimiento — TimeWidget TFG</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script src="../../dist/TimeWidget.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: monospace; background: #fff; margin: 16px; font-size: 13px; }
+    h2  { margin-bottom: 4px; }
+    .info { color: #555; font-size:.85em; margin: 2px 0 12px; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    select, button, input { padding: 4px 8px; font-family: monospace; font-size:12px; }
+    button { cursor:pointer; }
+    button:disabled { opacity:.4; cursor:default; }
+    #btnRun    { background:#1d4ed8; color:#fff; border:none; padding:6px 16px; }
+    #btnRunAll { background:#16a34a; color:#fff; border:none; padding:6px 16px; }
+    #btnClear  { background:#dc2626; color:#fff; border:none; }
+    #status { margin: 8px 0; min-height:18px; color: #333; }
+    #progress { width:300px; height:8px; background:#e5e7eb; border-radius:4px; display:none; }
+    #progressBar { height:100%; background:#1d4ed8; border-radius:4px; width:0%; transition:width .1s; }
+
+    /* Tabla de resultados */
+    table  { border-collapse:collapse; margin-top:12px; width:100%; max-width:680px; }
+    td, th { border:1px solid #ccc; padding:4px 10px; text-align:right; }
+    th     { background:#f3f4f6; text-align:center; }
+    td:first-child { text-align:left; }
+    .pass { color: #16a34a; font-weight:bold; }
+    .fail { color: #dc2626; font-weight:bold; }
+    .pending { color: #999; }
+
+    #widget-area { margin-top:12px; background:#f9f9f9; padding:8px; display:inline-block; }
+    .sep { border-top: 1px solid #ddd; margin: 14px 0 10px; }
+
+    /* Log */
+    #log { margin-top:10px; border:1px solid #ddd; padding:6px 10px; max-height:120px;
+           overflow-y:auto; font-size:.78em; color:#444; background:#fafafa; white-space:pre; }
+
+    /* Copiar LaTeX */
+    #latex-out { margin-top:8px; background:#f0f4ff; border:1px solid #b6c6f7;
+                 padding:8px; font-size:.78em; white-space:pre; display:none; }
+  </style>
+</head>
+<body>
+
+<h2>Benchmark de Rendimiento — TimeWidget</h2>
+<p class="info">Mide la mediana del tiempo de frame (ms) sobre 100 renders consecutivos para Canvas 2D y WebGPU.</p>
+
+<div class="controls">
+  <label>N.º series: <select id="selN">
+    <option value="1000">1 000</option>
+    <option value="5000">5 000</option>
+    <option value="10000" selected>10 000</option>
+    <option value="50000">50 000</option>
+    <option value="100000">100 000</option>
+    <option value="500000">500 000</option>
+    <option value="1000000">1 000 000</option>
+  </select></label>
+
+  <label>Renderer: <select id="selRenderer">
+    <option value="webgpu">WebGPU</option>
+    <option value="canvas">Canvas 2D</option>
+  </select></label>
+
+  <label>Muestras: <input id="inpSamples" type="number" value="100" min="20" max="500" style="width:60px"></label>
+  <label>Repeticiones: <input id="inpIters" type="number" value="3" min="1" max="10" style="width:50px"></label>
+
+  <button id="btnRun">▶ Medir</button>
+  <button id="btnRunAll">⟳ Medir seleccionados (tabla)</button>
+  <button id="btnClear">✕ Limpiar</button>
+</div>
+
+<div id="ns-checks" style="margin-bottom:12px; display:flex; gap:12px; flex-wrap:wrap; background:#f0f7ff; padding:8px; border-radius:4px; border:1px solid #cce3ff;">
+  <span style="font-weight:bold; color:#1e40af">Incluir en "Medir seleccionados":</span>
+  <label><input type="checkbox" class="ns-check" value="1000" checked> 1k</label>
+  <label><input type="checkbox" class="ns-check" value="5000" checked> 5k</label>
+  <label><input type="checkbox" class="ns-check" value="10000" checked> 10k</label>
+  <label><input type="checkbox" class="ns-check" value="50000" checked> 50k</label>
+  <label><input type="checkbox" class="ns-check" value="100000" checked> 100k</label>
+  <label><input type="checkbox" class="ns-check" value="500000"> 500k</label>
+  <label><input type="checkbox" class="ns-check" value="1000000"> 1M</label>
+</div>
+
+<div id="progress"><div id="progressBar"></div></div>
+<div id="status" class="pending">Listo. Pulsa "Medir" para comenzar.</div>
+
+<div id="widget-area">
+  <div id="widget-host"></div>
+</div>
+
+<div class="sep"></div>
+<b>Tabla de resultados</b>
+<table id="results-table">
+  <thead>
+    <tr>
+      <th>N.º series</th>
+      <th>Canvas 2D (ms)</th>
+      <th>WebGPU (ms)</th>
+      <th>Factor mejora</th>
+      <th>Canvas ≤16.67?</th>
+      <th>WebGPU ≤16.67?</th>
+    </tr>
+  </thead>
+  <tbody id="results-body"></tbody>
+</table>
+
+<button id="btnLatex" style="margin-top:8px; display:none">📋 Copiar filas LaTeX</button>
+<button id="btnChart" style="margin-top:8px; display:none; background:#6366f1; color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer; margin-left:8px;">📊 Generar Gráfica</button>
+<pre id="latex-out"></pre>
+
+<div id="chart-area" style="margin-top:20px; display:none; background:#fff; border:1px solid #ddd; padding:15px; border-radius:8px;">
+  <h3 style="margin-top:0">Comparativa de Rendimiento (ms)</h3>
+  <div id="chart-svg-host"></div>
+  <div style="margin-top:10px; font-size:11px; color:#666;">* Eje X en escala logarítmica para mejor visualización del crecimiento.</div>
+</div>
+
+<div id="log">— Log —</div>
+
+<script type="module">
+const THRESHOLD = 16.67; // ms → 60 fps
+
+// ── Silenciador de errores de extensiones (MetaMask, etc.) ───
+window.addEventListener('unhandledrejection', e => {
+  if (e.reason?.message?.includes('tabs:outgoing.message.ready')) {
+    e.preventDefault(); e.stopPropagation();
+  }
+});
+window.addEventListener('error', e => {
+  if (e.message?.includes('tabs:outgoing.message.ready')) {
+    e.preventDefault(); e.stopPropagation();
+  }
+}, true);
+
+const NS = [1000, 5000, 10000, 50000, 100000, 500000, 1000000];
+const RENDERERS = ["canvas", "webgpu"];
+
+// ── Dataset determinista ─────────────────────────────────────
+function mkRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = (1664525 * s + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+function buildDataset(n) {
+  const rng = mkRng(42);
+  const data = [];
+  const cl = (v,a,b) => Math.max(a, Math.min(b, v));
+  for (let s = 0; s < n; s++) {
+    const arch = s % 5;
+    const baseY = 10 + rng() * 75, slope = (rng() - .5) * 8;
+    const amp = 3 + rng() * 11, phase = rng() * Math.PI * 2;
+    const freq = .4 + rng() * .8, noise = 1 + rng() * 4;
+    for (let i = 0; i < 30; i++) {
+      const x = i / 29 * 10;
+      let y;
+      switch (arch) {
+        case 0: y = baseY + slope * x + (rng() - .5) * noise; break;
+        case 1: y = baseY + amp * Math.sin(freq * x + phase); break;
+        case 2: y = baseY + amp * Math.exp(-.5 * ((x - 5) / 1.5) ** 2); break;
+        case 3: y = baseY + (x > 5 ? 20 : -5) + (rng() - .5) * noise; break;
+        default: y = baseY + (rng() - .5) * amp * 2;
+      }
+      data.push({ id: `s${s}`, x, y: cl(y, 0, 100) });
+    }
+  }
+  return data;
+}
+
+// ── Estadísticas ─────────────────────────────────────────────
+function median(arr) {
+  if (!arr.length) return NaN;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// ── Resultados acumulados ─────────────────────────────────────
+const results = {}; // { N: { canvas: ms, webgpu: ms } }
+NS.forEach(n => { results[n] = { canvas: null, webgpu: null }; });
+
+// ── Log ──────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg) {
+  logEl.textContent += '\n' + msg;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── UI helpers ───────────────────────────────────────────────
+const statusEl = document.getElementById('status');
+const progressEl = document.getElementById('progress');
+const progressBar = document.getElementById('progressBar');
+
+function setStatus(msg) { statusEl.textContent = msg; }
+function setProgress(p) { // 0-1
+  progressEl.style.display = p > 0 ? 'block' : 'none';
+  progressBar.style.width = (p * 100) + '%';
+}
+
+// ── Widget management ────────────────────────────────────────
+let currentWidget = null;
+
+function destroyWidget() {
+  const host = document.getElementById('widget-host');
+  host.innerHTML = '';
+  currentWidget = null;
+}
+
+// ── Core measurement ─────────────────────────────────────────
+// Returns Promise<number> (median frame time in ms)
+function runMeasurement(n, renderer, samples) {
+  return new Promise((resolve, reject) => {
+    destroyWidget();
+    // Espera dinámica: mínimo 400ms + 1ms por cada 250 series
+    // Para 1M de series, esperará unos 4.4 segundos extra para estabilizar.
+    const settleTime = 400 + Math.floor(n / 250);
+    const host = document.getElementById('widget-host');
+    
+    setTimeout(() => {
+      let data;
+      try { data = buildDataset(n); }
+      catch(e) { reject(e); return; }
+
+      const times = [];
+      let lastT = null;
+      let warmup = 8; // descartar primeros eventos (init + addFilters)
+      let running = true;
+      let rafId;
+      let widgetEl = null;
+
+      // El widget dispara un evento "input" en su elemento DOM tras cada
+      // ciclo completo: render() → onSelectionChange() → triggerValueUpdate()
+      // → dispatchEvent(new Event("input"))
+      function onInput() {
+        if (!running) return;
+        const now = performance.now();
+        if (lastT !== null && warmup <= 0) {
+          const delta = now - lastT;
+          if (delta > 0 && delta < 500) { // ignorar picos > 500ms
+            times.push(delta);
+            setProgress(times.length / samples);
+          }
+        }
+        if (warmup > 0) warmup--;
+        lastT = now;
+
+        if (times.length >= samples) {
+          running = false;
+          cancelAnimationFrame(rafId);
+          if (widgetEl) widgetEl.removeEventListener('input', onInput);
+          const med = median(times);
+          log(`  → ${renderer.toUpperCase()} N=${n.toLocaleString()}: mediana=${med.toFixed(2)} ms (${times.length} muestras)`);
+          destroyWidget();
+          resolve(med);
+        }
+      }
+
+      // TimeWidget() devuelve el elemento DOM del widget
+      try {
+        widgetEl = TimeWidget(data, {
+          x: d => d.x, y: d => d.y, id: d => d.id,
+          target: host,
+          width: 800, height: 380,
+          margin: { left: 52, top: 28, bottom: 46, right: 20 },
+          renderer: renderer,
+          autoUpdate: true,
+          defaultColor: '#94a3b8',
+          defaultAlpha: 0.4,
+          noSelectedAlpha: 0.05,
+          filters: [{
+            name: 'Bench',
+            isEnable: true,
+            brushes: [{ selectionDomain: [[2, 40], [8, 80]] }]
+          }]
+        });
+        currentWidget = widgetEl;
+
+        // --- NUEVO: Seleccionar el brush automáticamente ---
+        const groups = widgetEl.ts.getBrushesGroup(); // Obtenemos los grupos
+        if (groups && groups.size > 0) {
+          const [groupId, group] = [...groups.entries()][0];
+          const [brushId] = [...group.brushes.keys()];
+          widgetEl.ts.selectBrush(groupId, brushId);
+          log(`  [Init] Brush seleccionado: ${brushId} en grupo ${group.name}`);
+        }
+      } catch(e) { reject(e); return; }
+
+      // Registrar listener sobre el elemento DOM devuelto
+      if (!widgetEl || typeof widgetEl.addEventListener !== 'function') {
+        reject(new Error('TimeWidget() no devolvió un elemento DOM. Comprueba la API.'));
+        return;
+      }
+      widgetEl.addEventListener('input', onInput);
+
+      // Drive: Mover el brush físicamente en cada frame
+      let phase = 0;
+      function frame() {
+        if (!running) return;
+        
+        phase += 0.08; // Más rápido para que sea evidente
+        const cx = 5 + 3.5 * Math.sin(phase); 
+        
+        if (widgetEl && widgetEl.ts) {
+          try {
+            widgetEl.ts.moveSelectedBrush([
+              [cx - 1.2, 80],
+              [cx + 1.2, 30]
+            ]);
+          } catch(e) {
+            widgetEl.ts.render();
+          }
+        }
+        rafId = requestAnimationFrame(frame);
+      }
+      rafId = requestAnimationFrame(frame);
+      log('  [Status] Animación de estrés iniciada.');
+
+    }, settleTime);
+  });
+}
+
+// ── Update results table ──────────────────────────────────────
+function renderTable() {
+  const tbody = document.getElementById('results-body');
+  tbody.innerHTML = '';
+  let hasAny = false;
+
+  NS.forEach(n => {
+    const r = results[n];
+    const tr = document.createElement('tr');
+    const canvas = r.canvas;
+    const webgpu = r.webgpu;
+    const factor = (canvas !== null && webgpu !== null && webgpu > 0)
+      ? (canvas / webgpu).toFixed(2) + '×' : '—';
+
+    function cell(v, threshold) {
+      if (v === null) return '<td class="pending">—</td>';
+      const cls = v <= threshold ? 'pass' : 'fail';
+      return `<td>${v.toFixed(2)}</td><td class="${cls}">${v <= threshold ? '✓' : '✗'}</td>`;
+    }
+
+    tr.innerHTML =
+      `<td>${n.toLocaleString()}</td>` +
+      (canvas !== null ? `<td>${canvas.toFixed(2)}</td>` : '<td class="pending">—</td>') +
+      (webgpu !== null ? `<td>${webgpu.toFixed(2)}</td>` : '<td class="pending">—</td>') +
+      `<td>${factor}</td>` +
+      (canvas !== null ? `<td class="${canvas <= THRESHOLD ? 'pass':'fail'}">${canvas <= THRESHOLD ? '✓ ≤16.67':'✗ >16.67'}</td>` : '<td class="pending">—</td>') +
+      (webgpu !== null ? `<td class="${webgpu <= THRESHOLD ? 'pass':'fail'}">${webgpu <= THRESHOLD ? '✓ ≤16.67':'✗ >16.67'}</td>` : '<td class="pending">—</td>');
+
+    tbody.appendChild(tr);
+    if (canvas !== null || webgpu !== null) hasAny = true;
+  });
+
+  const hasData = Object.values(results).some(r => r.canvas !== null && r.webgpu !== null);
+  document.getElementById('btnLatex').style.display = hasAny ? '' : 'none';
+  document.getElementById('btnChart').style.display = hasData ? '' : 'none';
+}
+
+// ── Dibujar Gráfica ───────────────────────────────────────────
+document.getElementById('btnChart').onclick = () => {
+  const area = document.getElementById('chart-area');
+  area.style.display = 'block';
+  const host = document.getElementById('chart-svg-host');
+  host.innerHTML = '';
+
+  const data = NS.filter(n => results[n].canvas !== null && results[n].webgpu !== null)
+                 .map(n => ({ n, canvas: results[n].canvas, webgpu: results[n].webgpu }));
+
+  if (data.length < 2) {
+    alert("Se necesitan al menos 2 filas con datos completos para generar la gráfica.");
+    return;
+  }
+
+  const margin = {top: 20, right: 100, bottom: 40, left: 60};
+  const width = 640 - margin.left - margin.right;
+  const height = 300 - margin.top - margin.bottom;
+
+  const svg = d3.select("#chart-svg-host")
+    .append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+    .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Escala Log para el eje X (N)
+  const x = d3.scaleLog()
+    .domain(d3.extent(data, d => d.n))
+    .range([0, width]);
+
+  svg.append("g")
+    .attr("transform", `translate(0,${height})`)
+    .call(d3.axisBottom(x).ticks(5, d3.format(".0s")));
+
+  // Escala Lineal para el eje Y (ms)
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(data, d => Math.max(d.canvas, d.webgpu))])
+    .nice()
+    .range([height, 0]);
+
+  svg.append("g")
+    .call(d3.axisLeft(y));
+
+  // Línea Canvas
+  const lineCanvas = d3.line()
+    .x(d => x(d.n))
+    .y(d => y(d.canvas));
+
+  svg.append("path")
+    .datum(data)
+    .attr("fill", "none")
+    .attr("stroke", "#dc2626")
+    .attr("stroke-width", 2.5)
+    .attr("d", lineCanvas);
+
+  // Línea WebGPU
+  const lineWebGPU = d3.line()
+    .x(d => x(d.n))
+    .y(d => y(d.webgpu));
+
+  svg.append("path")
+    .datum(data)
+    .attr("fill", "none")
+    .attr("stroke", "#6366f1")
+    .attr("stroke-width", 2.5)
+    .attr("d", lineWebGPU);
+
+  // Puntos
+  [ {key: 'canvas', color: '#dc2626'}, {key: 'webgpu', color: '#6366f1'} ].forEach(cfg => {
+    svg.selectAll(`.dot-${cfg.key}`)
+      .data(data)
+      .enter().append("circle")
+        .attr("r", 4)
+        .attr("cx", d => x(d.n))
+        .attr("cy", d => y(d[cfg.key]))
+        .attr("fill", cfg.color);
+  });
+
+  // Leyenda
+  const legend = svg.append("g").attr("transform", `translate(${width + 10}, 0)`);
+  [ {l: 'Canvas 2D', c: '#dc2626'}, {l: 'WebGPU', c: '#6366f1'} ].forEach((d, i) => {
+    legend.append("rect").attr("y", i*20).attr("width", 12).attr("height", 12).attr("fill", d.c);
+    legend.append("text").attr("x", 18).attr("y", i*20 + 10).text(d.l).style("font-size", "12px");
+  });
+
+  log('\n[Gráfica] Generada correctamente.');
+  area.scrollIntoView({ behavior: 'smooth' });
+};
+
+// ── Generar filas LaTeX ───────────────────────────────────────
+document.getElementById('btnLatex').onclick = () => {
+  let out = '% Filas para \\begin{tabular}{rrrr}\n';
+  NS.forEach(n => {
+    const r = results[n];
+    const cv  = r.canvas !== null  ? r.canvas.toFixed(2)  : '[RELLENAR]';
+    const gpu = r.webgpu !== null  ? r.webgpu.toFixed(2)  : '[RELLENAR]';
+    const fac = (r.canvas !== null && r.webgpu !== null && r.webgpu > 0)
+      ? (r.canvas / r.webgpu).toFixed(2) : '[RELLENAR]';
+    const nStr = n.toLocaleString('es-ES').replace('.', '\\,');
+    out += `  ${nStr.padStart(7)} & ${cv.padStart(10)} & ${gpu.padStart(8)} & ${fac.padStart(8)}\\times \\\\\n`;
+  });
+  const el = document.getElementById('latex-out');
+  el.style.display = '';
+  el.textContent = out;
+  log('\n[LaTeX] Filas generadas (copia y pega en la tabla).');
+};
+
+// ── Botón: medir uno ─────────────────────────────────────────
+document.getElementById('btnRun').onclick = async () => {
+  const n        = +document.getElementById('selN').value;
+  const renderer = document.getElementById('selRenderer').value;
+  const samples  = +document.getElementById('inpSamples').value;
+  const iters    = +document.getElementById('inpIters').value;
+  const btns     = [btnRun, btnRunAll];
+  btns.forEach(b => b.disabled = true);
+
+  setStatus(`Midiendo ${renderer.toUpperCase()} con N=${n.toLocaleString()} (S=${samples}, I=${iters})…`);
+  setProgress(0.01);
+  log(`\n[INICIO] ${renderer.toUpperCase()} N=${n.toLocaleString()} muestras=${samples} iters=${iters}`);
+
+  try {
+    let bestMed = Infinity;
+    for (let i = 0; i < iters; i++) {
+      if (iters > 1) setStatus(`Iteración ${i+1}/${iters} para ${renderer.toUpperCase()} N=${n.toLocaleString()}…`);
+      const med = await runMeasurement(n, renderer, samples);
+      if (med < bestMed) bestMed = med;
+      log(`  Iteración ${i+1}: ${med.toFixed(2)} ms`);
+    }
+    
+    results[n][renderer] = bestMed;
+    renderTable();
+    setStatus(`✅ Listo: ${renderer.toUpperCase()} N=${n.toLocaleString()} → Mejor: ${bestMed.toFixed(2)} ms`);
+  } catch(e) {
+    setStatus(`❌ Error: ${e.message}`);
+    log(`[ERROR] ${e}`);
+  }
+
+  setProgress(0);
+  btns.forEach(b => b.disabled = false);
+};
+
+// ── Botón: medir todos ───────────────────────────────────────
+document.getElementById('btnRunAll').onclick = async () => {
+  const samples = +document.getElementById('inpSamples').value;
+  const iters = +document.getElementById('inpIters').value;
+  const btns = [btnRun, btnRunAll];
+  
+  // Obtener los N seleccionados en los checkboxes
+  const selectedNS = Array.from(document.querySelectorAll('.ns-check:checked'))
+                          .map(cb => +cb.value);
+
+  if (selectedNS.length === 0) {
+    alert("Selecciona al menos un tamaño de N en los checkboxes.");
+    return;
+  }
+
+  btns.forEach(b => b.disabled = true);
+  log(`\n[INICIO] Secuencia: ${selectedNS.length} tamaños × 2 renderers × ${iters} iters`);
+
+  const order = [];
+  selectedNS.forEach(n => RENDERERS.forEach(r => order.push([n, r])));
+
+  for (let i = 0; i < order.length; i++) {
+    const [n, r] = order[i];
+    setStatus(`[${i+1}/${order.length}] ${r.toUpperCase()} N=${n.toLocaleString()}…`);
+    setProgress(0.01);
+    try {
+      let bestMed = Infinity;
+      for (let j = 0; j < iters; j++) {
+        const med = await runMeasurement(n, r, samples);
+        if (med < bestMed) bestMed = med;
+      }
+      results[n][r] = bestMed;
+      renderTable();
+    } catch(e) {
+      log(`[ERROR] ${r} N=${n}: ${e.message}`);
+    }
+    setProgress(0);
+    await new Promise(res => setTimeout(res, 500)); // pausa entre mediciones
+  }
+
+  setStatus('✅ Secuencia completa.');
+  btns.forEach(b => b.disabled = false);
+};
+
+// ── Limpiar ──────────────────────────────────────────────────
+document.getElementById('btnClear').onclick = () => {
+  NS.forEach(n => { results[n] = { canvas: null, webgpu: null }; });
+  renderTable();
+  logEl.textContent = '— Log —';
+  document.getElementById('latex-out').style.display = 'none';
+  setStatus('Tabla limpiada.');
+  setProgress(0);
+  destroyWidget();
+};
+
+// ── Init tabla vacía ─────────────────────────────────────────
+renderTable();
+log('Dataset determinista (semilla=42). Puntos/serie: 30.');
+log('Umbral de referencia: 16.67 ms (60 fps).');
+log('Pulsa "Medir" para una medición individual o "Medir todos" para la tabla completa.');
+log('NOTA: El modo "Medir todos" tarda varios minutos con N=50K y N=100K.');
+</script>
+</body>
+</html>

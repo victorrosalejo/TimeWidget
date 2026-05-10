@@ -1997,6 +1997,25 @@ ts.printSliders = function () {
 
     const totalLines = groupedData ? groupedData.length : 0;
     const calculatedDelay = Math.min(300, 30 + Math.floor(totalLines / 20));
+  ts.moveSelectedBrush = (selection) => {
+    brushes.moveSelectedBrush(selection);
+  };
+
+  ts.selectBrush = (groupId, brushId) => {
+    brushes.selectBrush(groupId, brushId);
+  };
+
+  ts.getBrushesGroup = () => {
+    return brushes.getBrushesGroup();
+  };
+  
+  ts.brushesColorScale = () => {
+    return brushes.colorScale;
+  };
+
+  ts.recomputeSelection = () => {
+    brushes.recomputeSelection();
+  };
     const throttledRecompute = throttle(calculatedDelay, () => {
         brushes.recomputeSelection();
     });
@@ -2785,6 +2804,15 @@ ts.printReferenceCurves = function (curves) {
   divOverview.details = detailsElement;
   divOverview.brushesCoordinates = brushesCoordinates;
   divOverview.groups = groupsElement;
+
+  // Exponer funciones para automatización
+  ts.selectBrush = (groupId, brushId) => {
+    brushes.selectBrush(groupId, brushId);
+  };
+  ts.getBrushesGroup = () => {
+    return brushes.getBrushesGroup();
+  };
+
   return divOverview;
 }
 

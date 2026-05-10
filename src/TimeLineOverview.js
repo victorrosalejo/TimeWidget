@@ -155,19 +155,22 @@ function TimeLineOverview({
           // );
 
           // Render selected
+          const groupColor = selectedColor || ts.brushesColorScale(0) || "#4682b4";
           renderOverviewCanvasSubset(
             data,
             ts.selectedAlpha,
-            selectedColor.toString(),
+            groupColor.toString(),
             group
           );
         }
       });
 
+      const selectedColor = computeColor(groupSelected);
+      const groupColor = selectedColor || ts.brushesColorScale(0) || "#4682b4";
       renderOverviewCanvasSubset(
         dataSelected.get(groupSelected),
         ts.selectedAlpha,
-        computeColor(groupSelected).toString(),
+        groupColor.toString(),
         groupSelected
       );
 
@@ -206,7 +209,8 @@ function TimeLineOverview({
   }
 
   function computeColor(groupId) {
-    return ts.brushesColorScale(groupId);
+    const color = ts.brushesColorScale(groupId);
+    return color || ts.brushesColorScale(0) || "#4682b4";
   }
 
   // Pass a groupId when rendering a highlighted selection for a group
