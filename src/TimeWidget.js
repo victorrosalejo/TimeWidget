@@ -126,6 +126,12 @@ function TimeWidget(
     timelineOverview,
     brushes; // Stores the reference lines
   let gProbes;
+  // Cache de render(): evita recrear Maps por frame cuando el estado no cambia.
+  // render() siempre creaba new Map()/Array.from() → el dirty-cache de estilos GPU nunca saltaba
+  // → updateStyles() escribía 3.2MB a la GPU en cada frame incluso sin cambios de selección.
+  const _renderEmptyArray = [];
+  let _renderInputSelected = null, _renderInputNotSelected = null, _renderInputHasSelection = undefined;
+  let _renderCachedMDataSelected = null, _renderCachedMDataNotSelected = null, _renderCachedMedians = null;
   let sliders = new Map();
   let sliderSeq = 0;
   function getRefCurveById(refId) {
@@ -1675,51 +1681,72 @@ function renderReferenceCurvesWidget() {
   // En TimeWidget.js
 
   function render(dataSelected, dataNotSelected, hasSelection) {
-    // Preparamos las medianas (solo de grupos activos)
-    let medians = [];
-    let enableBrushGroups = brushes.getEnableGroups();
-    enableBrushGroups.forEach((id) => {
-      if (medianBrushGroups.has(id)) {
-        medians.push([id, medianBrushGroups.get(id)]);
-      }
-    });
+    let medians, mDataSelected, mDataNotSelectedArr;
 
-    const isGroupWithPointAssociation = (groupId) => {
-      const hasPointAssoc = (referenceCurves || []).some(
-        (rc) =>
-          rc.isSimplePoints &&
-          Array.isArray(rc.associations) &&
-          rc.associations.some((assoc) => assoc.id === groupId && assoc.enabled)
-      );
+    if (
+      dataSelected   === _renderInputSelected   &&
+      dataNotSelected === _renderInputNotSelected &&
+      hasSelection   === _renderInputHasSelection &&
+      _renderCachedMDataSelected !== null
+    ) {
+      // Cache hit: mismos objetos de entrada → la selección no cambió entre frames.
+      // Pasamos las mismas referencias a timelineOverview.render() para que su
+      // dirty-check de estilos salte el writeBuffer de 3.2MB.
+      mDataSelected    = _renderCachedMDataSelected;
+      mDataNotSelectedArr = _renderCachedMDataNotSelected;
+      medians          = _renderCachedMedians;
+    } else {
+      // Cache miss: recalcular Maps y medianas
+      medians = [];
+      let enableBrushGroups = brushes.getEnableGroups();
+      enableBrushGroups.forEach((id) => {
+        if (medianBrushGroups.has(id)) {
+          medians.push([id, medianBrushGroups.get(id)]);
+        }
+      });
 
-      const hasActiveSlider = Array.from(sliders.values()).some(
-        (s) => s.groupId === groupId && s.enabled
-      );
+      const isGroupWithPointAssociation = (groupId) => {
+        const hasPointAssoc = (referenceCurves || []).some(
+          (rc) =>
+            rc.isSimplePoints &&
+            Array.isArray(rc.associations) &&
+            rc.associations.some((assoc) => assoc.id === groupId && assoc.enabled)
+        );
+        const hasActiveSlider = Array.from(sliders.values()).some(
+          (s) => s.groupId === groupId && s.enabled
+        );
+        return hasPointAssoc || hasActiveSlider;
+      };
 
-      return hasPointAssoc || hasActiveSlider;
-    };
+      mDataSelected = new Map();
+      let mDataNotSelectedSet = new Set(dataNotSelected);
 
-    let mDataSelected = new Map();
-    let mDataNotSelected = new Set(dataNotSelected);
+      dataSelected.forEach((groupData, groupId) => {
+        const group = brushes.getBrushesGroup().get(groupId);
+        if ((group && group.isEnable) || isGroupWithPointAssociation(groupId)) {
+          mDataSelected.set(groupId, groupData);
+        } else {
+          groupData.forEach((d) => mDataNotSelectedSet.add(d));
+        }
+      });
 
-    dataSelected.forEach((groupData, groupId) => {
-      const group = brushes.getBrushesGroup().get(groupId);
-      if ((group && group.isEnable) || isGroupWithPointAssociation(groupId)) {
-        mDataSelected.set(groupId, groupData);
-      } else {
-        groupData.forEach((d) => mDataNotSelected.add(d));
-      }
-    });
+      mDataSelected.forEach((arr) => {
+        for (const item of arr) mDataNotSelectedSet.delete(item);
+      });
+      mDataNotSelectedArr = Array.from(mDataNotSelectedSet);
 
-    mDataSelected.forEach((arr) => {
-      for (const item of arr) mDataNotSelected.delete(item);
-    });
-    dataNotSelected = Array.from(mDataNotSelected);
+      _renderInputSelected      = dataSelected;
+      _renderInputNotSelected   = dataNotSelected;
+      _renderInputHasSelection  = hasSelection;
+      _renderCachedMDataSelected    = mDataSelected;
+      _renderCachedMDataNotSelected = mDataNotSelectedArr;
+      _renderCachedMedians          = medians;
+    }
 
     timelineOverview.render(
       mDataSelected,
       brushes.getBrushGroupSelected(),
-      showNonSelected ? dataNotSelected : [],
+      showNonSelected ? mDataNotSelectedArr : _renderEmptyArray,
       medians,
       hasSelection
     );
@@ -2795,6 +2822,21 @@ ts.printReferenceCurves = function (curves) {
     // render(dataSelected, dataNotSelected);
     onSelectionChange();
   };
+
+  // Renderizado directo: llama a render() con el estado cacheado, sin recalcular
+  // medianas, reconstruir Maps ni disparar eventos. Usar solo para benchmarking.
+  ts.renderDirect = () => {
+    render(renderSelected, renderNotSelected, brushes.hasSelection());
+  };
+
+  // Espera sincronización GPU (WebGPU async). Canvas resuelve inmediatamente.
+  // Necesario para medir tiempos reales de GPU en benchmarks.
+  ts.syncGPU = () => timelineOverview.syncGPU();
+
+  // Sincronización equitativa para comparación canvas vs webgpu:
+  //   WebGPU → onSubmittedWorkDone()
+  //   Canvas 2D → getImageData(0,0,1,1) fuerza flush de rasterización Skia
+  ts.syncRenderer = () => timelineOverview.syncRenderer();
 
   // Remove possible previous event listener
   //target.removeEventListener("TimeWidget", onTimeWidgetEvent);

@@ -53,7 +53,6 @@ export default class WebGPURenderer {
     this.bindGroup = null;
     // Inicializar como array vacío para que draw() pueda hacer null-checks seguros
     this.bindGroups = [];
-    this.bindGroupNeedsUpdate = true;
     this.points = null;
     this.lineIndices = null;
     this.presentationFormat = navigator.gpu ? navigator.gpu.getPreferredCanvasFormat() : 'bgra8unorm';
@@ -79,6 +78,15 @@ export default class WebGPURenderer {
     this.msaaTexture = null;
     this.msaaTextureView = null;
     this.sampleCount = 4;
+
+    this.indexBuffer = null;
+    this.indexCount = 0;
+
+    this._mainRenderBundle = null;
+    this._renderBundleDirty = true;
+
+    this._uniformData = new Float32Array(8);
+    this._lastUniformKey = null;
   }
 
   // Inicialización asíncrona: primero pedimos el "adapter" (la GPU física)
@@ -121,6 +129,50 @@ export default class WebGPURenderer {
   // Aquí se compilan los shaders WGSL y se configuran los pipelines de renderizado.
 
   initPipeline() {
+    // Shader compacto para líneas principales: lee solo color (vec4, 16 bytes/línea).
+    // Reduce el style buffer de 32 bytes a 16 bytes, mejorando la tasa de acierto en
+    // caché L2 de la GPU (crítico para N > 50k donde el buffer supera la capacidad L2).
+    const compactShaderModule = this.device.createShaderModule({
+      label: "Compact Line Shader (color only)",
+      code: `
+        struct Uniforms {
+          domainX: vec2<f32>,
+          domainY: vec2<f32>,
+          screenSize: vec2<f32>,
+          _pad: vec2<f32>,
+        }
+
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+        @group(0) @binding(1) var<storage, read> lineColors: array<vec4<f32>>;
+
+        struct VertexInput {
+            @location(0) position: vec2<f32>,
+            @location(1) lineIndex: f32,
+        }
+
+        struct VertexOutput {
+            @builtin(position) position: vec4<f32>,
+            @location(0) color: vec4<f32>,
+        }
+
+        @vertex
+        fn vs_main(input: VertexInput) -> VertexOutput {
+            var output: VertexOutput;
+            let xNorm = (input.position.x - uniforms.domainX.x) / (uniforms.domainX.y - uniforms.domainX.x);
+            let yNorm = (input.position.y - uniforms.domainY.x) / (uniforms.domainY.y - uniforms.domainY.x);
+            output.position = vec4<f32>(-1.0 + 2.0 * xNorm, -1.0 + 2.0 * yNorm, 0.0, 1.0);
+            output.color = lineColors[u32(input.lineIndex)];
+            return output;
+        }
+
+        @fragment
+        fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+            if (input.color.a <= 0.0) { discard; }
+            return input.color;
+        }
+      `,
+    });
+
     const shaderModule = this.device.createShaderModule({
       label: "Line Shader with Dash Support",
       code: `
@@ -128,17 +180,16 @@ export default class WebGPURenderer {
           domainX: vec2<f32>,
           domainY: vec2<f32>,
           screenSize: vec2<f32>,
-          renderPass: f32, // 0: all, 1: non-selected, 2: selected
-          unused_padding: f32,
+          _pad: vec2<f32>,
         }
 
         struct LineStyle {
             color: vec4<f32>,      // 16 bytes (offset 0)
             params: vec4<f32>,     // 16 bytes (offset 16)
             // params.x = dashOn (pixels)
-            // params.y = dashOff (pixels)  
+            // params.y = dashOff (pixels)
             // params.z = lineWidth
-            // params.w = unused
+            // params.w = selectionFlag (unused in single-pass renderer)
         }
 
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -155,69 +206,51 @@ export default class WebGPURenderer {
             @location(1) worldPos: vec2<f32>,
             @location(2) lineLength: f32,
             @location(3) dashPattern: vec2<f32>, // (dashOn, dashOff)
-            @location(4) selectionFlag: f32,
         }
 
         @vertex
         fn vs_main(input: VertexInput) -> VertexOutput {
             var output: VertexOutput;
-            
-            // Normalize X to [0, 1] based on domain
+
             let xNorm = (input.position.x - uniforms.domainX.x) / (uniforms.domainX.y - uniforms.domainX.x);
-            // Normalize Y to [0, 1] based on domain
             let yNorm = (input.position.y - uniforms.domainY.x) / (uniforms.domainY.y - uniforms.domainY.x);
 
-            // Convert to Clip Space [-1, 1]
             let xClip = -1.0 + 2.0 * xNorm;
-            // D3 has 0 at top, WebGPU has 1 at top. 
-            // If yNorm is 1 (max domain), it should be 1 (Clip Space Top).
-            let yClip = -1.0 + 2.0 * yNorm; 
-            
+            // D3 y=0 is top; WebGPU clip y=1 is top — same direction, no flip needed
+            let yClip = -1.0 + 2.0 * yNorm;
+
             output.position = vec4<f32>(xClip, yClip, 0.0, 1.0);
             output.worldPos = input.position;
 
             let style = lineStyles[u32(input.lineIndex)];
+            // Color (rgba) and dash params already encode selection state — no pass filtering needed
             output.color = style.color;
             output.dashPattern = vec2<f32>(style.params.x, style.params.y);
-            output.selectionFlag = style.params.w;
-            
-            // Calculate line length in world space for dash pattern
-            // This is approximate - actual length calculated per-fragment
             output.lineLength = 0.0;
-            
+
             return output;
         }
 
         @fragment
         fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-            // Filter by pass
-            if (uniforms.renderPass > 0.5 && uniforms.renderPass < 1.5 && input.selectionFlag > 0.0) {
-                discard; // Pass 1: only non-selected
-            }
-            if (uniforms.renderPass > 1.5 && abs(input.selectionFlag - (uniforms.renderPass - 1.0)) > 0.1) {
-                discard; // Pass 2+: only specific group
+            // Discard transparent lines (alpha == 0 means the style map didn't include this line)
+            if (input.color.a <= 0.0) {
+                discard;
             }
 
-            // If dash pattern is defined (dashOn > 0)
+            // Dash pattern (dashOn > 0 activates it)
             if (input.dashPattern.x > 0.0) {
                 let dashOn = input.dashPattern.x;
                 let dashOff = input.dashPattern.y;
                 let dashPeriod = dashOn + dashOff;
-                
-                // Use total screen pixels (x + y) as a simple gradient for dashing
-                // This ensures the pattern changes even if length(pos) changes slowly
                 let dist = input.position.x + input.position.y;
-                
-                // Calculate position in dash cycle
                 let dashCycle = fract(dist / dashPeriod);
                 let dashRatio = dashOn / dashPeriod;
-                
-                // Discard fragments in "off" section
                 if (dashCycle > dashRatio) {
                     discard;
                 }
             }
-            
+
             return input.color;
         }
 
@@ -512,10 +545,10 @@ export default class WebGPURenderer {
     });
 
     this.pipeline = this.device.createRenderPipeline({
-      label: "Line Render Pipeline",
+      label: "Line Render Pipeline (compact style)",
       layout: pipelineLayout,
       vertex: {
-        module: shaderModule,
+        module: compactShaderModule,
         entryPoint: "vs_main",
         buffers: [
           {
@@ -528,7 +561,7 @@ export default class WebGPURenderer {
         ],
       },
       fragment: {
-        module: shaderModule,
+        module: compactShaderModule,
         entryPoint: "fs_main",
         targets: [
           {
@@ -545,14 +578,11 @@ export default class WebGPURenderer {
       multisample: { count: this.sampleCount },
     });
 
-    this.uniformBuffers = [];
-    for (let i = 0; i < 11; i++) {
-        this.uniformBuffers[i] = this.device.createBuffer({
-            size: 32, 
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
-    }
-    this.uniformBuffer = this.uniformBuffers[0]; 
+    this.uniformBuffer = this.device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.uniformBuffers = [this.uniformBuffer];
     this.bindGroups = [];
     
     return Promise.resolve();
@@ -561,25 +591,32 @@ export default class WebGPURenderer {
   uploadData(data) {
     if (!this.device) return;
 
-    let pointsAccumulator = [];
-    
-    this.idToIndex = new Map();
+    // Index buffer: cada punto se almacena una sola vez en el vertex buffer.
+    // Los índices forman pares (line-list) que referencian puntos compartidos entre
+    // segmentos consecutivos. La GPU reutiliza vértices via post-transform vertex cache,
+    // reduciendo las invocaciones del vertex shader ~48% para series de 30 muestras.
+    const pointsAccumulator = [];
+    const indexAccumulator  = [];
 
-    let totalPoints = 0;
-    
+    this.idToIndex = new Map();
+    let globalVertexOffset = 0;
+
     data.forEach((entry, index) => {
         this.idToIndex.set(entry.id, index);
         const pts = entry.points;
-        for (let i = 0; i < pts.length - 1; i++) {
+
+        for (let i = 0; i < pts.length; i++) {
             pointsAccumulator.push(pts[i][0], pts[i][1], index);
-            pointsAccumulator.push(pts[i+1][0], pts[i+1][1], index);
         }
+        for (let i = 0; i < pts.length - 1; i++) {
+            indexAccumulator.push(globalVertexOffset + i, globalVertexOffset + i + 1);
+        }
+        globalVertexOffset += pts.length;
     });
 
     if (pointsAccumulator.length === 0) return;
 
     const vertexData = new Float32Array(pointsAccumulator);
-    
     this.vertexBuffer = this.device.createBuffer({
         size: vertexData.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -587,19 +624,32 @@ export default class WebGPURenderer {
     });
     new Float32Array(this.vertexBuffer.getMappedRange()).set(vertexData);
     this.vertexBuffer.unmap();
-    
-    this.vertexCount = vertexData.length / 3;
+
+    const indexData = new Uint32Array(indexAccumulator);
+    this.indexBuffer = this.device.createBuffer({
+        size: indexData.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+    });
+    new Uint32Array(this.indexBuffer.getMappedRange()).set(indexData);
+    this.indexBuffer.unmap();
+
+    this.indexCount = indexData.length;
     this.lineCount = data.length;
 
-    // Style buffer: almacena color + parámetros de cada línea como storage buffer.
-  
-    const styleBufferSize = this.lineCount * 32; 
+    // Style buffer compacto: solo RGBA (16 bytes/línea vs 32 bytes con params).
+    // El pipeline principal usa array<vec4<f32>>, reduciendo el buffer a la mitad
+    // y mejorando la tasa de acierto en caché L2 de GPU para N > 50k.
+    const styleBufferSize = this.lineCount * 16;
     this.styleBuffer = this.device.createBuffer({
         size: styleBufferSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    
-    this.bindGroupNeedsUpdate = true;
+
+    // Pre-alocar buffer reutilizable: 4 floats por línea (r, g, b, a)
+    this._styleDataCache = new Float32Array(this.lineCount * 4);
+    this._styleBaseFilled = false;
+    this._bindGroupsDirty = true;
   }
 
   uploadMedians(medians, medianStyles, haloEnabled = true, haloConfig = {}) {
@@ -762,30 +812,45 @@ export default class WebGPURenderer {
       
       if (!this.idToIndex) return;
 
-      const styleData = new Float32Array(this.lineCount * 8); 
+      // Buffer compacto: 4 floats por línea (r, g, b, a). El pipeline principal usa
+      // array<vec4<f32>>, así que solo escribimos el color sin params extra.
+      if (!this._styleDataCache || this._styleDataCache.length !== this.lineCount * 4) {
+          this._styleDataCache = new Float32Array(this.lineCount * 4);
+          this._styleBaseFilled = false;
+      }
+      const styleData = this._styleDataCache;
 
-      for (let i=0; i < this.lineCount; i++) {
-          styleData[i*8 + 0] = defaultColor[0];
-          styleData[i*8 + 1] = defaultColor[1];
-          styleData[i*8 + 2] = defaultColor[2];
-          styleData[i*8 + 3] = defaultColor[3];
-          styleData[i*8 + 4] = 0; // dashOn
-          styleData[i*8 + 5] = 0; // dashOff
-          styleData[i*8 + 6] = 1; // lineWidth (default for Thin Line)
-          styleData[i*8 + 7] = 0; // selectionFlag
+      // Re-rellenar con color por defecto solo si cambió o si es la primera vez
+      const dc = defaultColor;
+      if (!this._styleBaseFilled ||
+          this._cachedDC0 !== dc[0] || this._cachedDC1 !== dc[1] ||
+          this._cachedDC2 !== dc[2] || this._cachedDC3 !== dc[3]) {
+          for (let i = 0; i < this.lineCount; i++) {
+              styleData[i*4 + 0] = dc[0];
+              styleData[i*4 + 1] = dc[1];
+              styleData[i*4 + 2] = dc[2];
+              styleData[i*4 + 3] = dc[3];
+          }
+          this._styleBaseFilled = true;
+          this._cachedDC0 = dc[0]; this._cachedDC1 = dc[1];
+          this._cachedDC2 = dc[2]; this._cachedDC3 = dc[3];
+          if (!this._styleBaseData || this._styleBaseData.length !== styleData.length) {
+              this._styleBaseData = new Float32Array(styleData);
+          } else {
+              this._styleBaseData.set(styleData);
+          }
+      } else {
+          styleData.set(this._styleBaseData);
       }
 
       stylesMap.forEach((style, id) => {
           if (this.idToIndex.has(id)) {
               const idx = this.idToIndex.get(id);
               if (style.color) {
-                  styleData[idx*8 + 0] = style.color[0];
-                  styleData[idx*8 + 1] = style.color[1];
-                  styleData[idx*8 + 2] = style.color[2];
-                  styleData[idx*8 + 3] = style.color[3];
-              }
-              if (style.selectionFlag !== undefined) {
-                  styleData[idx*8 + 7] = style.selectionFlag;
+                  styleData[idx*4 + 0] = style.color[0];
+                  styleData[idx*4 + 1] = style.color[1];
+                  styleData[idx*4 + 2] = style.color[2];
+                  styleData[idx*4 + 3] = style.color[3];
               }
           }
       });
@@ -793,23 +858,23 @@ export default class WebGPURenderer {
       this.device.queue.writeBuffer(this.styleBuffer, 0, styleData);
   }
   
-  updateUniforms(domains, width, height, margins = {top:0, left:0, right:0, bottom:0}, renderPass = 0) {
-      if (!this.device || !this.uniformBuffers) return;
-      
+  updateUniforms(domains, width, height, margins = {top:0, left:0, right:0, bottom:0}) {
+      if (!this.device || !this.uniformBuffer) return;
+
       this.currentWidth = width;
       this.currentHeight = height;
       this.margins = margins;
 
-      // Update all buffers in the pool with the same basic info but different passes
-      for (let i = 0; i < this.uniformBuffers.length; i++) {
-          const passValue = Float32Array.from([
-              domains.x[0], domains.x[1],
-              domains.y[0], domains.y[1],
-              width, height,
-              i, 0 // i is the pass index (0=all, 1=non-sel, 2=group1, etc.)
-          ]);
-          this.device.queue.writeBuffer(this.uniformBuffers[i], 0, passValue);
-      }
+      // Evitar writeBuffer si los valores no cambiaron (ahorra un IPC al GPU process por frame)
+      const key = `${domains.x[0]},${domains.x[1]},${domains.y[0]},${domains.y[1]},${width},${height}`;
+      if (key === this._lastUniformKey) return;
+      this._lastUniformKey = key;
+
+      this._uniformData[0] = domains.x[0]; this._uniformData[1] = domains.x[1];
+      this._uniformData[2] = domains.y[0]; this._uniformData[3] = domains.y[1];
+      this._uniformData[4] = width;         this._uniformData[5] = height;
+      this._uniformData[6] = 0;             this._uniformData[7] = 0;
+      this.device.queue.writeBuffer(this.uniformBuffer, 0, this._uniformData);
   }
 
   // Crea la textura de anti-aliasing MSAA y la textura de stencil para el halo
@@ -843,31 +908,51 @@ export default class WebGPURenderer {
     }
   }
 
-  draw(hasSelection = false, groupCount = 0) {
-      if (!this.device || !this.pipeline || !this.vertexBuffer || !this.styleBuffer) return;
-      if (!this.bindGroups) this.bindGroups = [];
-      
-      // Update bind groups for all active passes
-      const maxPasses = hasSelection ? (groupCount + 2) : 1;
-      for (let i = 0; i < Math.min(maxPasses, 11); i++) {
-        this.bindGroups[i] = this.device.createBindGroup({
-            layout: this.pipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: { buffer: this.uniformBuffers[i] } },
-                { binding: 1, resource: { buffer: this.styleBuffer } },
-            ]
-        });
-      }
+  // Pre-compila los comandos de draw de las líneas principales en un GPURenderBundle.
+  // executeBundles() es sustancialmente más rápido que re-codificar los mismos comandos
+  // cada frame: elimina validación de estado y reduce el IPC con el GPU process de Chrome.
+  // Se construye una sola vez tras uploadData() y se reutiliza hasta que cambian datos/pipeline.
+  _buildMainBundle() {
+    if (!this.device || !this.pipeline || !this.vertexBuffer || !this.indexBuffer ||
+        !this.bindGroups || !this.bindGroups[0]) return;
 
-      if (this.bindGroupNeedsUpdate) {
-          this.bindGroup = this.device.createBindGroup({
+    const bundleEncoder = this.device.createRenderBundleEncoder({
+      colorFormats: [this.presentationFormat],
+      depthStencilFormat: 'depth24plus-stencil8',
+      sampleCount: this.sampleCount,
+    });
+
+    bundleEncoder.setPipeline(this.pipeline);
+    bundleEncoder.setBindGroup(0, this.bindGroups[0]);
+    bundleEncoder.setVertexBuffer(0, this.vertexBuffer);
+    bundleEncoder.setIndexBuffer(this.indexBuffer, 'uint32');
+    bundleEncoder.drawIndexed(this.indexCount, 1, 0, 0, 0);
+
+    this._mainRenderBundle = bundleEncoder.finish();
+    this._renderBundleDirty = false;
+  }
+
+  draw(hasSelection = false, groupCount = 0) {
+      if (!this.device || !this.pipeline || !this.vertexBuffer || !this.indexBuffer || !this.styleBuffer) return;
+      if (!this.bindGroups) this.bindGroups = [];
+
+      // Recrear bind group solo cuando cambia el style buffer (uploadData)
+      if (this._bindGroupsDirty || !this.bindGroups.length) {
+          this.bindGroups = [this.device.createBindGroup({
               layout: this.pipeline.getBindGroupLayout(0),
               entries: [
                   { binding: 0, resource: { buffer: this.uniformBuffer } },
                   { binding: 1, resource: { buffer: this.styleBuffer } },
               ]
-          });
-          this.bindGroupNeedsUpdate = false;
+          })];
+          this.bindGroup = this.bindGroups[0];
+          this._bindGroupsDirty = false;
+          this._renderBundleDirty = true; // bind group cambió → bundle inválido
+      }
+
+      // Construir render bundle si es necesario (solo primera vez o tras cambio de datos)
+      if (this._renderBundleDirty || !this._mainRenderBundle) {
+          this._buildMainBundle();
       }
 
       const commandEncoder = this.device.createCommandEncoder();
@@ -876,7 +961,10 @@ export default class WebGPURenderer {
 
       this._ensureMSAATexture(canvasTexture.width, canvasTexture.height);
 
-      const renderPassDescriptor = {
+      // Cuando sampleCount=1 (MSAA desactivado), renderizar directamente al canvas.
+      // Con sampleCount>1, usar textura MSAA intermedia + resolveTarget al canvas.
+      const useMSAA = this.sampleCount > 1;
+      const renderPassDescriptor = useMSAA ? {
           colorAttachments: [
               {
                   view: this.msaaTextureView,
@@ -891,58 +979,38 @@ export default class WebGPURenderer {
               depthLoadOp: 'clear',  depthStoreOp: 'discard', depthClearValue: 1.0,
               stencilLoadOp: 'clear', stencilStoreOp: 'discard', stencilClearValue: 0,
           } : undefined,
+      } : {
+          colorAttachments: [
+              {
+                  view: canvasTextureView,
+                  clearValue: { r: 1, g: 1, b: 1, a: 0 },
+                  loadOp: "clear",
+                  storeOp: "store",
+              },
+          ],
+          depthStencilAttachment: this.stencilTextureView ? {
+              view: this.stencilTextureView,
+              depthLoadOp: 'clear',  depthStoreOp: 'discard', depthClearValue: 1.0,
+              stencilLoadOp: 'clear', stencilStoreOp: 'discard', stencilClearValue: 0,
+          } : undefined,
       };
 
       const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-      
+
       if (this.margins && this.currentWidth && this.currentHeight) {
-          const canvasWidth = this.context.getCurrentTexture().width;
-          const canvasHeight = this.context.getCurrentTexture().height;
-          
-          // currentWidth/currentHeight are now physical pixels (already include dpr)
-          // margins are still in CSS pixels, so multiply only them by dpr
+          const canvasWidth = canvasTexture.width;
+          const canvasHeight = canvasTexture.height;
           const dpr = window.devicePixelRatio || 1;
           const x = Math.floor(this.margins.left * dpr);
           const y = Math.floor(this.margins.top * dpr);
           const w = Math.floor(Math.min(canvasWidth - x, this.currentWidth  - this.margins.left * dpr - this.margins.right  * dpr));
           const h = Math.floor(Math.min(canvasHeight - y, this.currentHeight - this.margins.top  * dpr - this.margins.bottom * dpr));
-          
           passEncoder.setScissorRect(x, y, w, h);
       }
 
-      passEncoder.setPipeline(this.pipeline);
-      passEncoder.setBindGroup(0, this.bindGroup);
-      passEncoder.setVertexBuffer(0, this.vertexBuffer);
-      
-      // WebGPU tiene un límite en el número de vértices por draw call.
-      //  lotes de 100k vértices para no superarlo.
-      const MAX_VERTICES_PER_BATCH = 100000;
-      const batchCount = Math.ceil(this.vertexCount / MAX_VERTICES_PER_BATCH);
-      
-      if (hasSelection) {
-          passEncoder.setBindGroup(0, this.bindGroups[1]);
-          for (let i = 0; i < batchCount; i++) {
-              const firstVertex = i * MAX_VERTICES_PER_BATCH;
-              const vertexCount = Math.min(MAX_VERTICES_PER_BATCH, this.vertexCount - firstVertex);
-              passEncoder.draw(vertexCount, 1, firstVertex, 0);
-          }
-          
-          for (let g = 0; g < Math.min(groupCount, 9); g++) {
-              passEncoder.setBindGroup(0, this.bindGroups[g+2]); 
-              for (let i = 0; i < batchCount; i++) {
-                  const firstVertex = i * MAX_VERTICES_PER_BATCH;
-                  const vertexCount = Math.min(MAX_VERTICES_PER_BATCH, this.vertexCount - firstVertex);
-                  passEncoder.draw(vertexCount, 1, firstVertex, 0);
-              }
-          }
-      } else {
-          passEncoder.setBindGroup(0, this.bindGroups[0]);
-          for (let i = 0; i < batchCount; i++) {
-              const firstVertex = i * MAX_VERTICES_PER_BATCH;
-              const vertexCount = Math.min(MAX_VERTICES_PER_BATCH, this.vertexCount - firstVertex);
-              passEncoder.draw(vertexCount, 1, firstVertex, 0);
-          }
-      }
+      // Render bundle: ejecuta los comandos pre-compilados de las líneas principales.
+      // Elimina validación por frame y reduce mensajes IPC al GPU process de Chrome.
+      passEncoder.executeBundles([this._mainRenderBundle]);
       
       if (this.medianVertexBuffer && this.medianBindGroup && this.medianVertexCount > 0 && this.thickLinePipeline && this.jointPipeline) {
         
@@ -978,12 +1046,38 @@ export default class WebGPURenderer {
       this.device.queue.submit([commandEncoder.finish()]);
   }
 
+  // Ajusta el nivel de MSAA según el número de líneas.
+  // Para N > 10k, las líneas se superponen tanto que el anti-aliasing no aporta visualmente
+  // pero sí cuesta 4× más en el fragment shader. Se llama una vez tras uploadData().
+  setAdaptiveSampleCount(lineCount) {
+    const optimal = lineCount > 10000 ? 1 : 4;
+    if (this.sampleCount === optimal) return;
+    this.sampleCount = optimal;
+    // Recrear textura MSAA y stencil con el nuevo sample count
+    if (this._msaaWidth && this._msaaHeight) {
+      this._createMSAATexture(this._msaaWidth, this._msaaHeight);
+    }
+    // Recrear todos los pipelines (multisample.count está horneado en cada pipeline)
+    this.initPipeline();
+    this._bindGroupsDirty = true;
+    this._renderBundleDirty = true;
+    console.log(`%c[WebGPU] MSAA ajustado a ${optimal}× para ${lineCount.toLocaleString()} líneas`, 'color:#00aaff');
+  }
+
+  // Devuelve una Promise que resuelve cuando la GPU termina todos los comandos enviados.
+  // Necesario para medir tiempos reales de GPU (submit() es asíncrono).
+  syncGPU() {
+    if (!this.device) return Promise.resolve();
+    return this.device.queue.onSubmittedWorkDone();
+  }
+
   /**
    * Libera todos los recursos GPU: buffers, texturas, device.
    * Llamar en el unmount del widget para evitar memory leaks.
    */
   destroy() {
     if (this.vertexBuffer) { this.vertexBuffer.destroy(); this.vertexBuffer = null; }
+    if (this.indexBuffer)  { this.indexBuffer.destroy();  this.indexBuffer  = null; }
     if (this.styleBuffer) { this.styleBuffer.destroy(); this.styleBuffer = null; }
     if (this.medianVertexBuffer) { this.medianVertexBuffer.destroy(); this.medianVertexBuffer = null; }
     if (this.medianStyleBuffer) { this.medianStyleBuffer.destroy(); this.medianStyleBuffer = null; }
@@ -992,10 +1086,8 @@ export default class WebGPURenderer {
     if (this.msaaTexture) { this.msaaTexture.destroy(); this.msaaTexture = null; }
     if (this.stencilTexture) { this.stencilTexture.destroy(); this.stencilTexture = null; }
 
-    if (this.uniformBuffers) {
-      this.uniformBuffers.forEach(buf => { if (buf) buf.destroy(); });
-      this.uniformBuffers = null;
-    }
+    if (this.uniformBuffer) { this.uniformBuffer.destroy(); this.uniformBuffer = null; }
+    this.uniformBuffers = null;
 
     // Limpiar el resto de referencias
     this.pipeline = null;
