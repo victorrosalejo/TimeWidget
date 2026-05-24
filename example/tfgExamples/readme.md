@@ -1,6 +1,6 @@
 # Pruebas TFG — TimeWidget
 
-Herramientas HTML para la validación funcional y el benchmark de rendimiento de la memoria del TFG.
+Herramientas HTML para la validación funcional, el benchmark de rendimiento y la exploración interactiva de TimeWidget.
 
 ---
 
@@ -57,7 +57,8 @@ npx serve .
 Luego abre en Chrome:
 ```
 http://localhost:3000/example/tfgExamples/validacionFuncional.html
-http://localhost:3000/example/tfgExamples/benchmark_rendimiento.html
+http://localhost:3000/example/tfgExamples/benchmark_fps_fluidez.html
+http://localhost:3000/example/tfgExamples/ejemplo_interactivo.html
 ```
 
 ### Opción C — Python (si lo tienes instalado)
@@ -78,7 +79,8 @@ http://localhost:8080/example/tfgExamples/validacionFuncional.html
 | Archivo | Descripción |
 |---------|-------------|
 | `validacionFuncional.html` | 8 escenarios de validación funcional (E1–E8). Requiere interacción manual. |
-| `benchmark_rendimiento.html` | Benchmark automático Canvas 2D vs WebGPU. Genera filas LaTeX. |
+| `benchmark_fps_fluidez.html` | Benchmark de FPS real Canvas 2D vs WebGPU. Mide fotogramas por segundo durante renderizado continuo (`requestAnimationFrame`). Incluye tabla comparativa, gráfica exportable y automatización con Playwright (`benchmark_fps_runner.cjs`). |
+| `ejemplo_interactivo.html` | Demo interactiva del widget: ajuste de N, renderer (Canvas/WebGPU), grupos de color y brushing. Útil para explorar el comportamiento visual antes de ejecutar los benchmarks formales. |
 
 ---
 
@@ -96,11 +98,12 @@ chrome --enable-unsafe-webgpu --enable-features=Vulkan
 
 ## 6. Flujo de trabajo típico para la memoria
 
-```
+```bash
 npm install
 npm run build
 npx serve .
 ```
 
-1. Abre `validacionFuncional.html` → ejecuta E1–E8 → anota los conteos → pulsa "Verificar".
-2. Abre `benchmark_rendimiento.html` → pulsa **"⟳ Medir todos"** → espera → copia las filas LaTeX.
+1. **(Opcional)** Abre `ejemplo_interactivo.html` para explorar el widget y comprobar que Canvas 2D y WebGPU funcionan correctamente antes de medir.
+2. Abre `validacionFuncional.html` → ejecuta E1–E8 → anota los conteos → pulsa "Verificar".
+3. Abre `benchmark_fps_fluidez.html` → selecciona los N deseados → pulsa **"⟳ Medir todos"** → espera → pulsa **"📊 Generar gráfica"** para exportar el gráfico comparativo.
