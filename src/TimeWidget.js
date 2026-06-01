@@ -2032,11 +2032,11 @@ ts.printSliders = function () {
     brushes.selectBrush(groupId, brushId);
   };
 
-  ts.getBrushesGroup = () => {
+  ts.getBrushesGroup = () => {n
     return brushes.getBrushesGroup();
   };
   
-  ts.brushesColorScale = () => {
+  ts.getBrushesColorScale = () => {
     return brushes.colorScale;
   };
 
