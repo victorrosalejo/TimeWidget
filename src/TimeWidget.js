@@ -90,6 +90,7 @@ function TimeWidget(
     overviewHeight, // Legacy, to be deleted
     highlightAlpha = 1, // Transparency oh the highlighted lines (lines selected in other TS)
     renderer = "webgpu", // Rendering backend: 'webgpu' (default, GPU-accelerated) | 'canvas' (legacy Canvas 2D + d3)
+    enableLOD = false, // If false, disables WebGPU LOD (point & line subsampling). Useful when outliers must not be dropped.
   } = {}
 ) {
   width = overviewWidth || width;
@@ -250,6 +251,7 @@ function TimeWidget(
   ts.highlightAlpha = highlightAlpha;
   ts.selectedColorTransform = selectedColorTransform;
   ts.renderer = renderer;
+  ts.enableLOD = enableLOD;
   //Backwards compatibility with groupAttr.
   if (groupAttr) {
     console.warn('The attribute "groupAttr" is deprecated use "color" instead');
