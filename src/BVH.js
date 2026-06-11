@@ -15,7 +15,7 @@ function BVH({
   yPartitions = 10,
   polylines = true,
   referenceLines = null,
-  scaleY
+  scaleY = d3.scaleLinear()
 }) {
   let me = {};
   const unclampedScaleY = scaleY.copy().clamp(false);
