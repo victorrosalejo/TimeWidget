@@ -2492,7 +2492,7 @@ ts.printSliders = function () {
             if (isValidNumber(y)) {
               points.push([x, y]);
             }
-          } catch { /* noop */ }
+          } catch (_e) { /* noop */ }
         }
         return points;
       },
@@ -2514,7 +2514,7 @@ ts.printSliders = function () {
             if (isValidNumber(x) && isValidNumber(y)) {
               points.push([x, y]);
             }
-          } catch { /* noop */ }
+          } catch (_e) { /* noop */ }
         }
         return points;
       },
