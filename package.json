@@ -19,7 +19,9 @@
     "build": "rollup -c",
     "dev": "rollup -c -w",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "prepublish": "npm run build"
+    "prepublish": "npm run build",
+    "test:e2e": "node tests/e2e/help.mjs",
+    "lint": "eslint src/"
   },
   "keywords": [],
   "author": {
