@@ -178,6 +178,7 @@ This section will show all possible options grouped by categories.
  -  **groupsElement**: pass a html element where you want to have the brushes controls.
  -  **showBrushesControls**:If true, the brush control is displayed in the default location. If false you can still use brushesControlsElement to show the control on a different element on your app
  -  **showBrushTooltip**: Allows to display a tooltip on the brushes containing its coordinates.
+ -  **showHelp**: If true (default), shows a "?" button on the widget that opens an in-tool documentation popup and a step-by-step guided tour. You can also trigger them programmatically with `target.ts.showHelpPopup()` and `target.ts.startTour()`.
 ### Data
  - **x**:  Attribute to show in the X axis (Note that it also supports functions)
  - **y**:  Attribute to show in the Y axis (Note that it also supports functions)

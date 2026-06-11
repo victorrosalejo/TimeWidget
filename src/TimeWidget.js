@@ -7,6 +7,7 @@ import { throttle } from "throttle-debounce";
 import TimelineDetails from "./TimelineDetails.js";
 import TimeLineOverview from "./TimeLineOverview";
 import brushInteraction from "./BrushInteraction";
+import HelpSystem from "./HelpSystem.js";
 import { BrushAggregation, BrushModes } from "./utils.js";
 function TimeWidget(
   data,
@@ -17,6 +18,8 @@ function TimeWidget(
     showBrushTooltip = true, // Allows to display a tooltip on the brushes containing its coordinates.
     showBrushesCoordinates = true, // If false you can still use brushesCoordinatesElement to show the control on a different element on your app. For this use the exported value "brushesCoordinates"
     showDetails = true, // If false and with hasDetails = true, you can still use detailsElement to show the control on a different element on your app. For this use the exported value "details"
+    showHelp = true, // Shows the "?" help button with the built-in documentation popup and the step-by-step guided tour.
+    helpLang = "es", // Language for the built-in help system: 'es' (Spanish, default) or 'en' (English).
     /* Data */
     x = (d) => d.x, // Attribute to show in the X axis (Note that it also supports functions)
     y = (d) => d.y, // Attribute to show in the Y axis (Note that it also supports functions)
@@ -90,6 +93,7 @@ function TimeWidget(
     overviewHeight, // Legacy, to be deleted
     highlightAlpha = 1, // Transparency oh the highlighted lines (lines selected in other TS)
     renderer = "webgpu", // Rendering backend: 'webgpu' (default, GPU-accelerated) | 'canvas' (legacy Canvas 2D + d3)
+    enableLOD = false, // If false, disables WebGPU LOD (point & line subsampling). Useful when outliers must not be dropped.
   } = {}
 ) {
   width = overviewWidth || width;
@@ -126,6 +130,7 @@ function TimeWidget(
     timelineOverview,
     brushes; // Stores the reference lines
   let gProbes;
+  let helpSystem = null; // Sistema de ayuda: popup de documentación + demo guiada
   // Cache de render(): evita recrear Maps por frame cuando el estado no cambia.
   // render() siempre creaba new Map()/Array.from() → el dirty-cache de estilos GPU nunca saltaba
   // → updateStyles() escribía 3.2MB a la GPU en cada frame incluso sin cambios de selección.
@@ -250,6 +255,7 @@ function TimeWidget(
   ts.highlightAlpha = highlightAlpha;
   ts.selectedColorTransform = selectedColorTransform;
   ts.renderer = renderer;
+  ts.enableLOD = enableLOD;
   //Backwards compatibility with groupAttr.
   if (groupAttr) {
     console.warn('The attribute "groupAttr" is deprecated use "color" instead');
@@ -1228,6 +1234,27 @@ function renderReferenceCurvesWidget() {
     divOverview.appendChild(divControls);
     initBrushCoordinates();
     initBrushesControls();
+
+    // init() puede ejecutarse varias veces (ts.data); el sistema de ayuda solo se crea una vez.
+    if (showHelp && !helpSystem) {
+      helpSystem = HelpSystem({
+        container: divOverview,
+        lang: helpLang,
+        elements: {
+          chart: () => divRender.node(),
+          groups: () => (showBrushesControls ? groupsElement : null),
+          referenceCurves: () =>
+            referenceCurves && referenceCurves.length
+              ? d3.select(target).select("#rcWidget").node()
+              : null,
+          coordinates: () =>
+            showBrushesCoordinates ? brushesCoordinates : null,
+          dataGroups: () => (color && divData ? divData.node() : null),
+          details: () =>
+            ts.hasDetails && showDetails ? detailsElement : null,
+        },
+      });
+    }
 
     return g;
   }
@@ -2846,6 +2873,10 @@ ts.printReferenceCurves = function (curves) {
   divOverview.details = detailsElement;
   divOverview.brushesCoordinates = brushesCoordinates;
   divOverview.groups = groupsElement;
+
+  // Sistema de ayuda: abrir la documentación o la demo guiada desde fuera
+  ts.showHelpPopup = () => helpSystem && helpSystem.showHelp();
+  ts.startTour = () => helpSystem && helpSystem.startTour();
 
   // Exponer funciones para automatización
   ts.selectBrush = (groupId, brushId) => {

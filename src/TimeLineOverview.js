@@ -108,9 +108,11 @@ function TimeLineOverview({
       }));
 
       // LOD adaptativo para WebGPU: dos etapas de reducción para N masivo.
+      // Se puede deshabilitar con enableLOD: false para preservar outliers.
+      const useLOD = ts.enableLOD !== false;
       const n = formattedData.length;
-      const maxSamples = n > 75000 ? 5 : n > 40000 ? 8 : n > 20000 ? 14 : null;
-      const lineStep = n > 80000 ? 2 : n > 60000 ? 1.5 : 1;
+      const maxSamples = useLOD ? (n > 75000 ? 5 : n > 40000 ? 8 : n > 20000 ? 14 : null) : null;
+      const lineStep   = useLOD ? (n > 80000 ? 2 : n > 60000 ? 1.5 : 1) : 1;
 
       const sampledData = maxSamples
         ? formattedData.map(d => {
