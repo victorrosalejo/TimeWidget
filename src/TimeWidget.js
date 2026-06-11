@@ -2059,7 +2059,7 @@ ts.printSliders = function () {
     brushes.selectBrush(groupId, brushId);
   };
 
-  ts.getBrushesGroup = () => {n
+  ts.getBrushesGroup = () => {
     return brushes.getBrushesGroup();
   };
   
@@ -2492,7 +2492,7 @@ ts.printSliders = function () {
             if (isValidNumber(y)) {
               points.push([x, y]);
             }
-          } catch (e) {}
+          } catch { /* noop */ }
         }
         return points;
       },
@@ -2514,7 +2514,7 @@ ts.printSliders = function () {
             if (isValidNumber(x) && isValidNumber(y)) {
               points.push([x, y]);
             }
-          } catch (e) {}
+          } catch { /* noop */ }
         }
         return points;
       },
