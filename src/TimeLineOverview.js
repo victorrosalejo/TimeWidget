@@ -88,8 +88,25 @@ function TimeLineOverview({
   }
 
   me.data = function (data) {
+    // LOD para Canvas 2D: solo lineStep (saltar líneas), sin reducir puntos por línea.
+    // maxSamples no aplica aquí — existe para reducir bandwidth hacia la GPU.
+    const useLOD = ts.enableLOD !== false;
+    const n = data.length;
+    const lineStep = useLOD ? (n > 80000 ? 2 : n > 60000 ? 1.5 : 1) : 1;
+    const lodData  = lineStep > 1
+      ? data.filter((_, i) => Math.round(i % lineStep) === 0)
+      : data;
+
+    if (useLOD && lineStep > 1) {
+      const pct = Math.round((1 - lodData.length / n) * 100);
+      console.log(
+        `%c[Canvas2D] LOD: ${n.toLocaleString()} → ${lodData.length.toLocaleString()} líneas (−${pct}%)`,
+        'color:#ffaa00'
+      );
+    }
+
     paths = new Map();
-    data.forEach((d) => {
+    lodData.forEach((d) => {
       let group = groupAttr ? groupAttr(d[1][0]) : null;
       let pathObject = { path: new Path2D(line(d[1])), group: group };
       paths.set(d[0], pathObject);
@@ -277,10 +294,7 @@ function TimeLineOverview({
 
     for (let d of dataSubset) {
       let path = paths.get(d[0]);
-      if (!path) {
-        console.log("renderOverviewCanvasSubset error finding path", d[0], d);
-        return;
-      }
+      if (!path) continue;
       let strokeColor = color;
       if (groupAttr) {
         const baseGroupColor = ts.colorScale(path.group);
